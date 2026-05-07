@@ -24,6 +24,12 @@
             <artifactId>jeecg-module-demo</artifactId>
             <version>${jeecgboot.version}</version>
         </dependency>
+        <!-- CUSTOM 自定义业务模块 -->
+        <dependency>
+            <groupId>org.jeecgframework.boot3</groupId>
+            <artifactId>jeecg-module-custom</artifactId>
+            <version>${jeecgboot.version}</version>
+        </dependency>
         
         <!-- flyway 数据库自动升级 -->
         <dependency>

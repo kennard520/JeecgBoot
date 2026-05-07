@@ -1,0 +1,4 @@
+para-migrate*.properties
+!para-migrate.properties.example
+*.log
+*.class

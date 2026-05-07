@@ -1,0 +1,45 @@
+# SQL Server source
+source.url=jdbc:sqlserver://127.0.0.1:1433;databaseName=SOURCE_DB;encrypt=true;trustServerCertificate=true
+source.username=sa
+source.password=change_me
+source.schema=dbo
+
+# Dameng target
+target.url=jdbc:dm://127.0.0.1:5236?schema=TARGET_SCHEMA&compatibleMode=oracle&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
+target.username=TARGET_SCHEMA
+target.password=change_me
+target.schema=TARGET_SCHEMA
+
+# Migration scope
+table.prefix=PARA_
+
+# fail: stop if target table exists
+# recreate: drop and recreate target tables, then copy data
+# truncate: keep target structure, truncate target tables, then copy data; create table if absent
+# append: create table if absent, then append data
+target.tableMode=fail
+
+# migrate: create/copy/validate data
+# validate: only compare source and target row counts
+# merge-add: merge PARA_*_ADD tables into corresponding base tables, then drop _ADD tables
+run.mode=migrate
+
+# Preserve SQL Server identity columns as DM identity columns.
+# If true, the tool will try SET IDENTITY_INSERT before copying identity values.
+target.preserveIdentity=true
+
+# Create primary keys and non-PK indexes after data copy.
+target.createPrimaryKeys=true
+target.createIndexes=true
+
+batch.size=500
+fetch.size=1000
+
+# Dameng VARCHAR2 length is byte-oriented in this deployment. Keep extra room for
+# Chinese text copied from SQL Server varchar/nvarchar columns.
+target.stringLengthMultiplier=4
+target.maxVarcharBytes=4000
+
+# Optional comma-separated table names for retrying a subset, for example:
+# table.include=PARA_COMPLEX,PARA_DEST
+table.include=

@@ -130,15 +130,15 @@ spring:
       datasource:
         # 重点是将数据源指向oracle 用compatibleMode=oracle即可
         master:
-          url: jdbc:dm://127.0.0.1:30236?schema=SYSDBA&compatibleMode=oracle&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
-          username: SYSDBA
-          password: SYSDBA
+          url: jdbc:dm://124.223.39.167:5236?schema=CUSTOMAFFAIRS&compatibleMode=oracle&zeroDateTimeBehavior=convertToNull&useUnicode=true&characterEncoding=utf-8
+          username: CUSTOMAFFAIRS
+          password: '@Cit666888'
           driverClassName: dm.jdbc.driver.DmDriver
   #redis 配置
   data:
     redis:
       database: 0
-      host: 127.0.0.1
+      host: 124.223.39.167
       port: 6379
       password: ''
 #mybatis plus 设置

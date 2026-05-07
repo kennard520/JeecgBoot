@@ -1,0 +1,34 @@
+liteflow:
+  print-banner: false
+  parse-mode: PARSE_ONE_ON_FIRST_EXEC
+  rule-source-ext-data-map:
+    applicationName: jeecg
+    # 是否开启 SQL 日志
+    sqlLogEnabled: true
+    # 编排规则表配置
+    chainTableName: airag_flow
+    chainApplicationNameField: application_name
+    chainNameField: id
+    elDataField: chain
+    chainCustomSql: select id, application_name, chain from airag_flow where status = 'enable' and chain is not null
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dm8
+
+liteflow:
+  print-banner: false
+  parse-mode: PARSE_ONE_ON_FIRST_EXEC
+  rule-source-ext-data-map:
+    applicationName: jeecg
+    sqlLogEnabled: true
+    # JeecgBoot 使用 dynamic-datasource，DM8 下直接指定 master。
+    baomidouDataSource: master
+    chainTableName: AIRAG_FLOW
+    chainApplicationNameField: APPLICATION_NAME
+    chainNameField: ID
+    elDataField: CHAIN
+    # DM8 初始化脚本已统一使用双引号大写表字段，这里保持同一套标识符。
+    chainCustomSql: select "ID", "APPLICATION_NAME", "CHAIN" from "AIRAG_FLOW" where "STATUS" = 'enable' and "CHAIN" is not null

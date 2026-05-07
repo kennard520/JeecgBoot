@@ -1,0 +1,73 @@
+package org.jeecg.modules.custom.cit.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.experimental.Accessors;
+import org.jeecgframework.poi.excel.annotation.Excel;
+import java.io.Serializable;
+
+/**
+ * 禁限管制申报要素DecControlModel。
+ *
+ * <p>根据 {@code jeecg-boot/db/其他数据库脚本/达梦/CIT.sql} 生成，字段注释保留原脚本中的
+ * 中文名、原字段代码、原数据类型、长度、暂存/申报必填状态和说明，便于后续对接海关 CIT 报文。</p>
+ *
+ * @author jeecg-boot
+ * @since 3.9.1
+ */
+@Data
+@EqualsAndHashCode(callSuper = false)
+@Accessors(chain = true)
+@Schema(description = "禁限管制申报要素DecControlModel")
+@TableName("DEC_CONTROL_MODEL")
+public class DecControlModel implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    /**
+     * 主键ID，达梦自增标识列
+     */
+    @TableId(value = "id", type = IdType.AUTO)
+    @Excel(name = "主键ID，达梦自增标识列", width = 15)
+    @Schema(description = "主键ID，达梦自增标识列")
+    private Long id;
+    /**
+     * 报关单表头ID，父表关联ID
+     */
+    @TableField("dec_head_id")
+    @Excel(name = "报关单表头ID，父表关联ID", width = 15)
+    @Schema(description = "报关单表头ID，父表关联ID")
+    private Long decHeadId;
+    /**
+     * 报关单商品表体ID，父表关联ID
+     */
+    @TableField("dec_list_id")
+    @Excel(name = "报关单商品表体ID，父表关联ID", width = 15)
+    @Schema(description = "报关单商品表体ID，父表关联ID")
+    private Long decListId;
+    /**
+     * 要素序号；字段代码: ElementNo；数据类型: String；长度: 19；暂存必填: 是；申报必填: 是；说明: 禁限管制申报要素序号
+     */
+    @TableField("element_no")
+    @Excel(name = "要素序号", width = 15)
+    @Schema(description = "要素序号")
+    private String elementNo;
+    /**
+     * 要素值；字段代码: ElementValue；数据类型: String；长度: 512；暂存必填: 否；申报必填: 否；说明: 禁限管制申报要素值
+     */
+    @TableField("element_value")
+    @Excel(name = "要素值", width = 15)
+    @Schema(description = "要素值")
+    private String elementValue;
+    /**
+     * 禁限管制规范申报类别；字段代码: DeclarationCategoryCode；数据类型: String；长度: 4；暂存必填: 是；申报必填: 是；说明: 填写4位禁限管制规范申报类别代码
+     */
+    @TableField("declaration_category_code")
+    @Excel(name = "禁限管制规范申报类别", width = 15)
+    @Schema(description = "禁限管制规范申报类别")
+    private String declarationCategoryCode;
+}
