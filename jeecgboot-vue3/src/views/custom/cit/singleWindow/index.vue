@@ -3,6 +3,7 @@
   import DeclarationHeadForm from './components/DeclarationHeadForm.vue';
   import DeclarationMasterList from './components/DeclarationMasterList.vue';
   import GoodsSection from './components/GoodsSection.vue';
+  import RelatedDataSidePanels from './components/RelatedDataSidePanels.vue';
   import RelatedDataTabs from './components/RelatedDataTabs.vue';
   import { goodsColumns, goodsFormFields, headListColumns, headSections, relatedTabConfigs, singleWindowParaOptionSources } from './cit.data';
   import { useParaOptions } from './composables/useParaOptions';
@@ -42,6 +43,8 @@
     { label: '进出口', value: headForm.value.ieFlag === 'E' ? '出口' : '进口' },
     { label: '收发货人', value: headForm.value.tradeName },
   ]);
+  const sideRelatedConfigs = computed(() => relatedTabConfigs.filter((item) => item.key === 'decContainer' || item.key === 'decLicenseDocus'));
+  const moreRelatedConfigs = computed(() => relatedTabConfigs.filter((item) => item.key !== 'decContainer' && item.key !== 'decLicenseDocus'));
   const headSelectFields = headSections.flatMap((section) => section.fields).filter((item) => item.optionSource);
   const goodsSelectFields = goodsFormFields.filter((item) => item.optionSource);
 
@@ -111,16 +114,27 @@
         />
       </main>
 
-      <RelatedDataTabs
+      <RelatedDataSidePanels
         class="single-window-page__right"
         :headId="currentHeadId"
         :goodsId="currentGoodsId"
-        :configs="relatedTabConfigs"
+        :configs="sideRelatedConfigs"
         :optionMap="optionMap"
         :optionLoadingMap="optionLoadingMap"
         @option-search="loadParaOptions"
       />
     </div>
+
+    <RelatedDataTabs
+      class="single-window-page__more"
+      title="更多"
+      :headId="currentHeadId"
+      :goodsId="currentGoodsId"
+      :configs="moreRelatedConfigs"
+      :optionMap="optionMap"
+      :optionLoadingMap="optionLoadingMap"
+      @option-search="loadParaOptions"
+    />
 
     <DeclarationMasterList
       mode="workspace"
@@ -204,6 +218,10 @@
 
     &__right {
       min-width: 0;
+    }
+
+    &__more {
+      margin-top: 8px;
     }
   }
 

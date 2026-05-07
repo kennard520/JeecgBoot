@@ -12,10 +12,14 @@
     configs: RelatedTabConfig[];
     optionMap?: ParaOptionMap;
     optionLoadingMap?: ParaOptionLoadingMap;
+    expanded?: boolean;
+    expandable?: boolean;
+    title?: string;
   }>();
 
   const emit = defineEmits<{
     optionSearch: [source: ParaOptionSourceKey, keyword?: string];
+    'update:expanded': [value: boolean];
   }>();
 
   const { createMessage } = useMessage();
@@ -40,6 +44,8 @@
     ...(currentConfig.value?.columns || []),
     { title: '操作', dataIndex: 'action', width: 110, fixed: 'right', align: 'center' },
   ]);
+  const paginationConfig = computed(() => ({ pageSize: props.expanded ? 10 : 6, size: 'small' as const }));
+  const tableScroll = computed(() => ({ x: 820, y: props.expanded ? 360 : 196 }));
   const editorRules = computed(() => {
     const result: Record<string, any[]> = {};
     currentConfig.value?.formFields.forEach((item) => {
@@ -160,15 +166,31 @@
     }
   }
 
+  function toggleExpanded() {
+    emit('update:expanded', !props.expanded);
+  }
+
+  watch(
+    () => props.configs,
+    (configs) => {
+      if (!configs.some((item) => item.key === activeKey.value)) {
+        activeKey.value = configs[0]?.key;
+      }
+    },
+    { immediate: true }
+  );
   watch([activeKey, () => props.headId, () => props.goodsId], () => loadCurrent(), { immediate: true });
 </script>
 
 <template>
-  <section class="related-data-tabs">
+  <section class="related-data-tabs" :class="{ 'is-expanded': expanded }">
     <div class="related-data-tabs__header">
-      <span>集装箱及随附资料</span>
+      <span>{{ title || '集装箱及随附资料' }}</span>
       <div class="related-data-tabs__actions">
         <a-button preIcon="ant-design:reload-outlined" @click="loadCurrent">刷新</a-button>
+        <a-button v-if="expandable" :preIcon="expanded ? 'ant-design:fullscreen-exit-outlined' : 'ant-design:fullscreen-outlined'" @click="toggleExpanded">
+          {{ expanded ? '收起' : '展开' }}
+        </a-button>
         <a-button preIcon="ant-design:plus-outlined" type="primary" @click="openAdd">新增</a-button>
       </div>
     </div>
@@ -182,8 +204,8 @@
       :columns="tableColumns"
       :dataSource="currentRows"
       :loading="loading"
-      :pagination="{ pageSize: 6, size: 'small' }"
-      :scroll="{ x: 820, y: 196 }"
+      :pagination="paginationConfig"
+      :scroll="tableScroll"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'action'">
