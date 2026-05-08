@@ -1,0 +1,147 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'jeecg-boot/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Spring profile（默认 prod）'
+        required: false
+        default: 'prod'
+
+env:
+  ACR_REGISTRY: crpi-2ygmzugyhvp3nw13.cn-shanghai.personal.cr.aliyuncs.com
+  ACR_NAMESPACE: kuawei
+  IMAGE_NAME: jeecg-system
+  CONTAINER_NAME: cit-jeecg-system
+  REMOTE_USER: root
+  REMOTE_HOST: ${{ secrets.TENCENT_HOST }}
+  PROJECT_DIR: jeecg-boot
+  MODULE_PATH: jeecg-boot/jeecg-module-system/jeecg-system-start
+
+jobs:
+  # 1. 构建 jar + 推 ACR
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.sha.outputs.short }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: sha
+        run: echo "short=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Build jar (jeecg-system-start + 依赖模块)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          mvn -B -DskipTests \
+            -pl jeecg-module-system/jeecg-system-start -am \
+            clean package
+
+      - name: Login ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.MODULE_PATH }}
+          push: true
+          tags: |
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
+
+  # 2. SSH 到腾讯云拉镜像 + 重启
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy ${{ env.IMAGE_NAME }}
+        uses: appleboy/ssh-action@v1
+        env:
+          PROFILE: ${{ github.event.inputs.profile || 'prod' }}
+        with:
+          host: ${{ env.REMOTE_HOST }}
+          username: ${{ env.REMOTE_USER }}
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          envs: PROFILE
+          script: |
+            set -e
+            NAME=${{ env.CONTAINER_NAME }}
+            IMAGE=${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.short_sha }}
+            APP_DIR=/opt/app/${NAME}
+            LOG_DIR=${APP_DIR}/logs
+            CONFIG_DIR=${APP_DIR}/config
+            mkdir -p $LOG_DIR $CONFIG_DIR
+
+            docker login ${{ env.ACR_REGISTRY }} -u '${{ secrets.ACR_USERNAME }}' -p '${{ secrets.ACR_PASSWORD }}'
+            docker pull $IMAGE
+
+            # 记录旧镜像用于回滚
+            OLD_IMAGE=$(docker inspect $NAME --format '{{.Config.Image}}' 2>/dev/null || echo "")
+            echo "Old image: $OLD_IMAGE"
+
+            # 配置外挂约定：
+            # 把 application-${PROFILE}.yml 放到服务器 /opt/app/cit-jeecg-system/config/，
+            # Spring Boot 启动时会从 /jeecg-boot/config/ 自动加载（优先级高于 jar 内部）。
+            # 这样数据库密码等敏感配置不进镜像。首次部署前需在服务器 mkdir + 放 application-prod.yml。
+            run_container() {
+              local img=$1
+              docker rm -f $NAME 2>/dev/null || true
+              docker run -d --name $NAME \
+                --restart=always \
+                --network=host \
+                -e SPRING_PROFILES_ACTIVE=$PROFILE \
+                -e TZ=Asia/Shanghai \
+                -v $LOG_DIR:/jeecg-boot/logs \
+                -v $CONFIG_DIR:/jeecg-boot/config \
+                $img
+            }
+
+            run_container $IMAGE
+
+            # 健康检查：JeecgBoot 容器 CMD 内有 sleep 60，加上 JVM 启动 ~30s，总等待最长 3 分钟
+            echo "Health check..."
+            STARTED=false
+            for i in $(seq 1 36); do
+              sleep 5
+              STATUS=$(docker inspect $NAME --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+              if [ "$STATUS" != "running" ]; then
+                echo "Container not running (status=$STATUS) at iteration $i"
+                break
+              fi
+              if docker logs --tail 200 $NAME 2>&1 | grep -q "Application Jeecg-Boot is running"; then
+                echo "App started at iteration $i (~$((i*5))s)"
+                STARTED=true
+                break
+              fi
+            done
+
+            FINAL=$(docker inspect $NAME --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+            if [ "$STARTED" != "true" ] || [ "$FINAL" != "running" ] || docker logs --tail 300 $NAME 2>&1 | grep -E "APPLICATION FAILED TO START|Application run failed" -q; then
+              echo "===== Deploy failed, dumping last 300 lines of container log ====="
+              docker logs --tail 300 $NAME 2>&1 || true
+              echo "===== End of failed container log ====="
+              echo "Deploy failed, rolling back..."
+              if [ -n "$OLD_IMAGE" ]; then
+                run_container $OLD_IMAGE
+                echo "Rolled back to $OLD_IMAGE"
+              fi
+              exit 1
+            fi
+
+            echo "Deploy success"
+            docker image prune -f || true
