@@ -16,8 +16,8 @@ on:
 env:
   ACR_REGISTRY: crpi-2ygmzugyhvp3nw13.cn-shanghai.personal.cr.aliyuncs.com
   ACR_NAMESPACE: kuawei
-  IMAGE_NAME: jeecg-system
-  CONTAINER_NAME: cit-jeecg-system
+  IMAGE_NAME: jeecgboot
+  CONTAINER_NAME: cit-jeecgboot
   REMOTE_USER: root
   REMOTE_HOST: ${{ secrets.TENCENT_HOST }}
   PROJECT_DIR: jeecg-boot
