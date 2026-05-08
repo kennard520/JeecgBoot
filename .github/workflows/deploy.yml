@@ -24,7 +24,7 @@ env:
   MODULE_PATH: jeecg-boot/jeecg-module-system/jeecg-system-start
 
 jobs:
-  # 1. 构建 jar + 推 ACR
+  # 阶段 1：编译 jar，作为 artifact 传给下一个 job
   build:
     runs-on: ubuntu-latest
     outputs:
@@ -48,6 +48,27 @@ jobs:
             -pl jeecg-module-system/jeecg-system-start -am \
             clean package
 
+      - name: Upload jar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: ${{ env.MODULE_PATH }}/target/jeecg-system-start-*.jar
+          retention-days: 1
+          if-no-files-found: error
+
+  # 阶段 2：构建镜像 + 推送到 ACR
+  push:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4   # 拉 Dockerfile
+
+      - name: Download jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: ${{ env.MODULE_PATH }}/target/
+
       - name: Login ACR
         uses: docker/login-action@v3
         with:
@@ -61,13 +82,13 @@ jobs:
           context: ${{ env.MODULE_PATH }}
           push: true
           tags: |
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.short_sha }}
             ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/${{ env.IMAGE_NAME }}:latest
 
-  # 2. SSH 到腾讯云拉镜像 + 重启
+  # 阶段 3：SSH 到腾讯云拉镜像 + 重启 + 健康检查 + 失败回滚
   deploy:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, push]
     steps:
       - name: Deploy ${{ env.IMAGE_NAME }}
         uses: appleboy/ssh-action@v1
