@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: 'Spring profile（默认 prod）'
+        description: 'Spring profile（默认 dm8 = 达梦数据库）'
         required: false
-        default: 'prod'
+        default: 'dm8'
 
 env:
   ACR_REGISTRY: crpi-2ygmzugyhvp3nw13.cn-shanghai.personal.cr.aliyuncs.com
@@ -93,7 +93,7 @@ jobs:
       - name: Deploy ${{ env.IMAGE_NAME }}
         uses: appleboy/ssh-action@v1
         env:
-          PROFILE: ${{ github.event.inputs.profile || 'prod' }}
+          PROFILE: ${{ github.event.inputs.profile || 'dm8' }}
         with:
           host: ${{ env.REMOTE_HOST }}
           username: ${{ env.REMOTE_USER }}
@@ -116,9 +116,10 @@ jobs:
             echo "Old image: $OLD_IMAGE"
 
             # 配置外挂约定：
-            # 把 application-${PROFILE}.yml 放到服务器 /opt/app/cit-jeecg-system/config/，
+            # 把 application-${PROFILE}.yml 放到服务器 /opt/app/cit-jeecgboot/config/，
             # Spring Boot 启动时会从 /jeecg-boot/config/ 自动加载（优先级高于 jar 内部）。
-            # 这样数据库密码等敏感配置不进镜像。首次部署前需在服务器 mkdir + 放 application-prod.yml。
+            # 默认 PROFILE=dm8（达梦数据库），如需其它环境通过 workflow_dispatch 的 profile 参数覆盖。
+            # 这样数据库密码等敏感配置不进镜像。首次部署前需在服务器 mkdir + 放 application-${PROFILE}.yml。
             run_container() {
               local img=$1
               docker rm -f $NAME 2>/dev/null || true
