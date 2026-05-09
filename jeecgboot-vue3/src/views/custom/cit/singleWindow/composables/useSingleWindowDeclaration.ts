@@ -22,7 +22,7 @@ function createEmptyGoods(decHeadId?: string | number, nextNo = 1): DecList {
   };
 }
 
-export function useSingleWindowDeclaration() {
+export function useSingleWindowDeclaration(initialHeadId?: string | number) {
   const { createMessage } = useMessage();
   const headForm = ref<DecHead>(createEmptyHead());
   const goodsForm = ref<DecList>(createEmptyGoods());
@@ -179,7 +179,11 @@ export function useSingleWindowDeclaration() {
   }
 
   onMounted(async () => {
-    await Promise.all([loadCitVersion(), loadHeadRows()]);
+    await loadCitVersion();
+    const rows = await loadHeadRows(initialHeadId ? { id: initialHeadId } : undefined);
+    if (initialHeadId && !rows.length) {
+      await loadHeadRows();
+    }
   });
 
   return {

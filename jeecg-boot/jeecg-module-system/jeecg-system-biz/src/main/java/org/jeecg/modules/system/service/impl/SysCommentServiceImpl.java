@@ -137,7 +137,7 @@ public class SysCommentServiceImpl extends ServiceImpl<SysCommentMapper, SysComm
             }
 
             if (oConvertUtils.isEmpty(bizPath)) {
-                bizPath = CommonConstant.UPLOAD_TYPE_OSS.equals(uploadType) ? "upload" : "";
+                bizPath = isRemoteObjectStorage(uploadType) ? "upload" : "";
             }
             if (CommonConstant.UPLOAD_TYPE_LOCAL.equals(uploadType)) {
                 savePath = this.uploadLocal(file, bizPath);
@@ -397,6 +397,12 @@ public class SysCommentServiceImpl extends ServiceImpl<SysCommentMapper, SysComm
             }
         }
         return map;
+    }
+
+    private boolean isRemoteObjectStorage(String uploadType) {
+        return CommonConstant.UPLOAD_TYPE_OSS.equals(uploadType)
+                || CommonConstant.UPLOAD_TYPE_TENCENT_COS.equals(uploadType)
+                || CommonConstant.UPLOAD_TYPE_COS.equals(uploadType);
     }
     
 }

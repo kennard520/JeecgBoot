@@ -32,8 +32,8 @@ public class JeecgBaseConfig {
      */
     private String signUrls;
     /**
-     * 上传模式  
-     * 本地：local\Minio：minio\阿里云：alioss
+     * 上传模式
+     * 本地：local\Minio：minio\阿里云：alioss\腾讯云COS：tencentcos
      */
     private String uploadType;
     
@@ -87,6 +87,13 @@ public class JeecgBaseConfig {
     @Getter
     @Setter
     private JeecgOSS oss;
+
+    /**
+     * 腾讯云COS配置
+     */
+    @Getter
+    @Setter
+    private JeecgCos cos;
 
     /**
      * 短信发送方式 aliyun阿里云短信 tencent腾讯云短信

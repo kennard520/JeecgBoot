@@ -71,7 +71,7 @@ public class CommonController {
         SsrfFileTypeFilter.checkUploadFileType(file, bizPath);
   
         if (oConvertUtils.isEmpty(bizPath)) {
-            bizPath = CommonConstant.UPLOAD_TYPE_OSS.equals(uploadType) ? "upload" : "";
+            bizPath = isRemoteObjectStorage(uploadType) ? "upload" : "";
         }
         if(CommonConstant.UPLOAD_TYPE_LOCAL.equals(uploadType)){
             savePath = this.uploadLocal(file,bizPath);
@@ -318,7 +318,7 @@ public class CommonController {
             // 文件安全校验，防止上传漏洞文件
             SsrfFileTypeFilter.checkUploadFileType(file, bizPath);
             if (oConvertUtils.isEmpty(bizPath)) {
-                bizPath = CommonConstant.UPLOAD_TYPE_OSS.equals(uploadType) ? "upload" : "";
+                bizPath = isRemoteObjectStorage(uploadType) ? "upload" : "";
             }
             if(CommonConstant.UPLOAD_TYPE_LOCAL.equals(uploadType)){
                 savePath = this.uploadLocal(file,bizPath);
@@ -330,6 +330,12 @@ public class CommonController {
             log.error(e.getMessage(), e);
             return Result.error(e.getMessage());
         }
+    }
+
+    private boolean isRemoteObjectStorage(String uploadType) {
+        return CommonConstant.UPLOAD_TYPE_OSS.equals(uploadType)
+                || CommonConstant.UPLOAD_TYPE_TENCENT_COS.equals(uploadType)
+                || CommonConstant.UPLOAD_TYPE_COS.equals(uploadType);
     }
 
 }

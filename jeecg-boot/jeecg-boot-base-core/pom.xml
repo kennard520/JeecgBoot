@@ -280,6 +280,11 @@
 			<artifactId>aliyun-sdk-oss</artifactId>
 			<version>${aliyun.oss.version}</version>
 		</dependency>
+		<!-- 腾讯云COS文件存储服务 -->
+		<dependency>
+			<groupId>com.qcloud</groupId>
+			<artifactId>cos_api</artifactId>
+		</dependency>
 		<!-- 第三方登录  -->
 		<dependency>
 			<groupId>com.xkcoding.justauth</groupId>

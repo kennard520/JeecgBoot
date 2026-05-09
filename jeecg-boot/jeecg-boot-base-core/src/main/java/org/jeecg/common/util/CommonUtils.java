@@ -14,6 +14,7 @@ import org.jeecg.common.constant.SymbolConstant;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.common.util.filter.SsrfFileTypeFilter;
 import org.jeecg.common.util.oss.OssBootUtil;
+import org.jeecg.common.util.oss.TencentCosUtil;
 import org.jeecgframework.poi.util.PoiPublicUtil;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.util.FileCopyUtils;
@@ -76,6 +77,8 @@ public class CommonUtils {
                     dbPath = MinioUtil.upload(in,relativePath);
                 }else if(CommonConstant.UPLOAD_TYPE_OSS.equals(uploadType)){
                     dbPath = OssBootUtil.upload(in,relativePath);
+                }else if(isTencentCosUploadType(uploadType)){
+                    dbPath = TencentCosUtil.upload(in, relativePath);
                 }
             }
         } catch (Exception e) {
@@ -138,6 +141,8 @@ public class CommonUtils {
         try {
             if (CommonConstant.UPLOAD_TYPE_MINIO.equals(uploadType)) {
                 url = MinioUtil.upload(file, bizPath);
+            } else if (isTencentCosUploadType(uploadType)) {
+                url = TencentCosUtil.upload(file, bizPath);
             } else {
                 url = OssBootUtil.upload(file, bizPath);
             }
@@ -206,6 +211,8 @@ public class CommonUtils {
         try {
             if (CommonConstant.UPLOAD_TYPE_MINIO.equals(uploadType)) {
                 url = MinioUtil.upload(file, bizPath, customBucket);
+            } else if (isTencentCosUploadType(uploadType)) {
+                url = TencentCosUtil.upload(file, bizPath, customBucket);
             } else {
                 url = OssBootUtil.upload(file, bizPath, customBucket);
             }
@@ -218,6 +225,10 @@ public class CommonUtils {
     /** 当前系统数据库类型 */
     private static String DB_TYPE = "";
     private static DbType dbTypeEnum = null;
+
+    private static boolean isTencentCosUploadType(String uploadType) {
+        return CommonConstant.UPLOAD_TYPE_TENCENT_COS.equals(uploadType) || CommonConstant.UPLOAD_TYPE_COS.equals(uploadType);
+    }
 
     /**
      * 全局获取平台数据库类型（作废了）

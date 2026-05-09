@@ -1,5 +1,6 @@
 <script setup lang="ts" name="CustomCitSingleWindow">
   import { computed, ref, watch } from 'vue';
+  import { useRoute } from 'vue-router';
   import DeclarationHeadForm from './components/DeclarationHeadForm.vue';
   import DeclarationMasterList from './components/DeclarationMasterList.vue';
   import GoodsSection from './components/GoodsSection.vue';
@@ -11,6 +12,7 @@
   import type { CitFieldConfig, CitRecord, DecHead } from './types';
 
   const headFormRef = ref<any>();
+  const route = useRoute();
   const { optionMap, optionLoadingMap, loadParaOptions, ensureParaOption } = useParaOptions(singleWindowParaOptionSources);
 
   const {
@@ -33,7 +35,7 @@
     resetGoods,
     saveGoods,
     deleteGoods,
-  } = useSingleWindowDeclaration();
+  } = useSingleWindowDeclaration(route.query.decHeadId as string | undefined);
 
   const statusItems = computed(() => [
     { label: '申报地海关', value: headForm.value.customMaster },
