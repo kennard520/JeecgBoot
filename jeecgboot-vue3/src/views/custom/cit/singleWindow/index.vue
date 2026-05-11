@@ -1,5 +1,5 @@
 <script setup lang="ts" name="CustomCitSingleWindow">
-  import { computed, ref, watch } from 'vue';
+  import { computed, nextTick, ref, watch } from 'vue';
   import { useRoute } from 'vue-router';
   import DeclarationHeadForm from './components/DeclarationHeadForm.vue';
   import DeclarationMasterList from './components/DeclarationMasterList.vue';
@@ -7,12 +7,21 @@
   import RelatedDataSidePanels from './components/RelatedDataSidePanels.vue';
   import RelatedDataTabs from './components/RelatedDataTabs.vue';
   import { goodsColumns, goodsFormFields, headListColumns, headSections, relatedTabConfigs, singleWindowParaOptionSources } from './cit.data';
+  import { saveCitEntity } from './cit.api';
   import { useParaOptions } from './composables/useParaOptions';
-  import { useSingleWindowDeclaration } from './composables/useSingleWindowDeclaration';
-  import type { CitFieldConfig, CitRecord, DecHead } from './types';
+  import { createEmptyHead, useSingleWindowDeclaration } from './composables/useSingleWindowDeclaration';
+  import { useMessage } from '/@/hooks/web/useMessage';
+  import type { CitFieldConfig, CitRecord, DecHead, DecList } from './types';
 
   const headFormRef = ref<any>();
+  const headAddFormRef = ref<any>();
+  const moreRelatedTabsRef = ref<any>();
+  const headAddVisible = ref(false);
+  const headAddSaving = ref(false);
+  const markLobUploading = ref(false);
+  const headAddModel = ref<DecHead>(createEmptyHead());
   const route = useRoute();
+  const { createMessage } = useMessage();
   const { optionMap, optionLoadingMap, loadParaOptions, ensureParaOption } = useParaOptions(singleWindowParaOptionSources);
 
   const {
@@ -29,10 +38,10 @@
     selectedHeadKey,
     loadHeadRows,
     selectHead,
-    resetHead,
+    saveHeadRecord,
     saveHead,
     selectGoods,
-    resetGoods,
+    saveGoodsRecord,
     saveGoods,
     deleteGoods,
   } = useSingleWindowDeclaration(route.query.decHeadId as string | undefined);
@@ -49,6 +58,7 @@
   const moreRelatedConfigs = computed(() => relatedTabConfigs.filter((item) => item.key !== 'decContainer' && item.key !== 'decLicenseDocus'));
   const headSelectFields = headSections.flatMap((section) => section.fields).filter((item) => item.optionSource);
   const goodsSelectFields = goodsFormFields.filter((item) => item.optionSource);
+  const imageExtensionSet = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']);
 
   function ensureSelectedOptions(record: CitRecord, fields: CitFieldConfig[]) {
     fields.forEach((item) => {
@@ -62,14 +72,116 @@
   watch(goodsForm, (value) => ensureSelectedOptions(value, goodsSelectFields), { immediate: true, deep: true });
   watch(goodsRows, (rows) => rows.forEach((item) => ensureSelectedOptions(item, goodsSelectFields)), { immediate: true, deep: true });
 
-  function handleResetHead() {
-    resetHead();
-    headFormRef.value?.clearValidate();
+  function openHeadAddModal() {
+    headAddModel.value = createEmptyHead();
+    headAddVisible.value = true;
+    nextTick(() => headAddFormRef.value?.clearValidate());
   }
 
   async function handleSaveHead() {
     await headFormRef.value?.validate();
     await saveHead();
+  }
+
+  async function handleSaveNewHead() {
+    await headAddFormRef.value?.validate();
+    headAddSaving.value = true;
+    try {
+      await saveHeadRecord(headAddModel.value);
+      headAddVisible.value = false;
+    } finally {
+      headAddSaving.value = false;
+    }
+  }
+
+  async function handleCreateGoods(record: DecList, close: () => void) {
+    await saveGoodsRecord(record);
+    close();
+  }
+
+  function readFileAsBase64(file: File) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        resolve(result.includes(',') ? result.split(',')[1] : result);
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function getFileExtension(fileName: string) {
+    const ext = fileName.includes('.') ? fileName.split('.').pop() || '' : '';
+    return ext.toLowerCase();
+  }
+
+  function inferAttachType(fileName: string) {
+    return getFileExtension(fileName);
+  }
+
+  function isImageFile(file: File) {
+    if (file.type) {
+      return file.type.toLowerCase().startsWith('image/');
+    }
+    return imageExtensionSet.has(getFileExtension(file.name));
+  }
+
+  async function handleUploadMarkLob(file: File) {
+    if (!currentHeadId.value) {
+      createMessage.warning('请先保存表头，再上传标记唛码附件');
+      return;
+    }
+    if (!isImageFile(file)) {
+      createMessage.warning('标记唛码附件只能上传图片');
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      createMessage.warning('标记唛码附件不能超过 1MB');
+      return;
+    }
+    markLobUploading.value = true;
+    try {
+      const attachment = await readFileAsBase64(file);
+      await saveCitEntity(
+        'decMarkLob',
+        {
+          decHeadId: currentHeadId.value,
+          attachName: file.name.slice(0, 80),
+          attachType: inferAttachType(file.name),
+          attachment,
+        },
+        false
+      );
+      createMessage.success('标记唛码附件已上传');
+      if (moreRelatedTabsRef.value?.activate) {
+        await moreRelatedTabsRef.value.activate('decMarkLob');
+      } else {
+        await moreRelatedTabsRef.value?.loadCurrent?.();
+      }
+    } finally {
+      markLobUploading.value = false;
+    }
+  }
+
+  function handleUploadNewMarkLob(file: File) {
+    if (!isImageFile(file)) {
+      createMessage.warning('标记唛码附件只能上传图片');
+      return;
+    }
+    createMessage.warning('请先保存新增报关单，再上传标记唛码附件');
+  }
+
+  async function handleAddDecUser() {
+    if (!currentHeadId.value) {
+      createMessage.warning('请先保存表头，再维护使用人信息');
+      return;
+    }
+    await moreRelatedTabsRef.value?.openAddByKey?.('decUser');
+  }
+
+  function handleAddNewDecUser() {
+    createMessage.warning('请先保存新增报关单，再维护使用人信息');
   }
 
   async function handleSelectHead(record: DecHead) {
@@ -79,6 +191,10 @@
 
 <template>
   <div class="single-window-page">
+    <div class="single-window-page__toolbar">
+      <a-button type="primary" size="small" :loading="savingHead" @click="handleSaveHead">保存表头</a-button>
+    </div>
+
     <div class="single-window-page__status">
       <span v-for="item in statusItems" :key="item.label">
         <em>{{ item.label }}</em>
@@ -93,9 +209,12 @@
           v-model="headForm"
           :sections="headSections"
           :saving="savingHead"
+          :markLobUploading="markLobUploading"
           :optionMap="optionMap"
           :optionLoadingMap="optionLoadingMap"
           @save="handleSaveHead"
+          @mark-lob-upload="handleUploadMarkLob"
+          @dec-user-add="handleAddDecUser"
           @option-search="loadParaOptions"
         />
         <GoodsSection
@@ -109,7 +228,7 @@
           :optionMap="optionMap"
           :optionLoadingMap="optionLoadingMap"
           @save="saveGoods"
-          @reset="resetGoods"
+          @create="handleCreateGoods"
           @select="selectGoods"
           @delete="deleteGoods"
           @option-search="loadParaOptions"
@@ -128,6 +247,7 @@
     </div>
 
     <RelatedDataTabs
+      ref="moreRelatedTabsRef"
       class="single-window-page__more"
       title="更多"
       :headId="currentHeadId"
@@ -146,8 +266,30 @@
       :selectedRowKeys="selectedHeadKey"
       @search="loadHeadRows"
       @select="handleSelectHead"
-      @add="handleResetHead"
+      @add="openHeadAddModal"
     />
+
+    <a-modal
+      v-model:open="headAddVisible"
+      title="新增报关单"
+      :confirmLoading="headAddSaving || savingHead"
+      width="980px"
+      :bodyStyle="{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto', background: '#f0f2f5' }"
+      @ok="handleSaveNewHead"
+    >
+      <DeclarationHeadForm
+        ref="headAddFormRef"
+        v-model="headAddModel"
+        :sections="headSections"
+        :saving="headAddSaving"
+        :optionMap="optionMap"
+        :optionLoadingMap="optionLoadingMap"
+        @save="handleSaveNewHead"
+        @mark-lob-upload="handleUploadNewMarkLob"
+        @dec-user-add="handleAddNewDecUser"
+        @option-search="loadParaOptions"
+      />
+    </a-modal>
   </div>
 </template>
 
@@ -156,6 +298,12 @@
     min-height: calc(100vh - 84px);
     padding: 8px;
     background: #f0f2f5;
+
+    &__toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
 
     &__status {
       display: grid;

@@ -3,7 +3,7 @@
   import { Modal } from 'ant-design-vue';
   import { cloneDeep } from 'lodash-es';
   import { useMessage } from '/@/hooks/web/useMessage';
-  import { deleteCitEntity, queryCitRecords, saveCitEntity } from '../cit.api';
+  import { deleteCitEntity, queryCitById, queryCitRecords, saveCitEntity } from '../cit.api';
   import type { CitFieldConfig, CitRecord, ParaOptionLoadingMap, ParaOptionMap, ParaOptionSourceKey, RelatedTabConfig } from '../types';
 
   const props = defineProps<{
@@ -30,14 +30,14 @@
   const editorSaving = shallowRef(false);
   const editorModel = ref<CitRecord>({});
   const formRef = ref<any>();
+  const previewVisible = shallowRef(false);
+  const previewLoading = shallowRef(false);
+  const previewRecord = ref<CitRecord>({});
+  const previewImageSrc = shallowRef('');
 
   const currentConfig = computed(() => props.configs.find((item) => item.key === activeKey.value) || props.configs[0]);
   const currentRows = computed(() => rowsMap.value[currentConfig.value?.key || ''] || []);
-  const currentParentId = computed(() => {
-    const config = currentConfig.value;
-    if (!config) return undefined;
-    return config.parentSource === 'head' ? props.headId : props.goodsId;
-  });
+  const currentParentId = computed(() => getParentId(currentConfig.value));
   const currentNeedsGoods = computed(() => currentConfig.value?.parentSource === 'goods');
   const editorTitle = computed(() => `${editorModel.value.id ? '编辑' : '新增'}${currentConfig.value?.title || ''}`);
   const tableColumns = computed(() => [
@@ -56,20 +56,24 @@
     return result;
   });
 
-  function withParentFields(record: CitRecord = {}) {
-    const config = currentConfig.value;
-    const parentId = currentParentId.value;
+  function getParentId(config?: RelatedTabConfig) {
+    if (!config) return undefined;
+    return config.parentSource === 'head' ? props.headId : props.goodsId;
+  }
+
+  function withParentFields(record: CitRecord = {}, config = currentConfig.value) {
+    const parentId = getParentId(config);
     const result = { ...record };
     if (config && parentId) result[config.parentField] = parentId;
-    if (props.headId && currentConfig.value?.formFields.some((item) => item.field === 'decHeadId')) result.decHeadId = props.headId;
-    if (props.goodsId && currentConfig.value?.formFields.some((item) => item.field === 'decListId')) result.decListId = props.goodsId;
+    if (props.headId && config?.formFields.some((item) => item.field === 'decHeadId')) result.decHeadId = props.headId;
+    if (props.goodsId && config?.formFields.some((item) => item.field === 'decListId')) result.decListId = props.goodsId;
     return result;
   }
 
-  async function loadCurrent() {
-    const config = currentConfig.value;
+  async function loadByKey(key?: RelatedTabConfig['key']) {
+    const config = props.configs.find((item) => item.key === key);
     if (!config) return;
-    const parentId = currentParentId.value;
+    const parentId = getParentId(config);
     if (!parentId) {
       rowsMap.value = { ...rowsMap.value, [config.key]: [] };
       return;
@@ -83,12 +87,22 @@
     }
   }
 
-  function assertParentReady() {
+  async function loadCurrent() {
+    await loadByKey(currentConfig.value?.key);
+  }
+
+  async function activate(key: RelatedTabConfig['key']) {
+    if (!props.configs.some((item) => item.key === key)) return;
+    activeKey.value = key;
+    await loadByKey(key);
+  }
+
+  function assertParentReady(config = currentConfig.value) {
     if (!props.headId) {
       createMessage.warning('请先暂存表头');
       return false;
     }
-    if (currentNeedsGoods.value && !props.goodsId) {
+    if (config?.parentSource === 'goods' && !props.goodsId) {
       createMessage.warning('请先选择商品明细');
       return false;
     }
@@ -96,8 +110,17 @@
   }
 
   function openAdd() {
-    if (!assertParentReady()) return;
+    if (!assertParentReady(currentConfig.value)) return;
     editorModel.value = withParentFields({});
+    editorVisible.value = true;
+  }
+
+  function openAddByKey(key: RelatedTabConfig['key']) {
+    const config = props.configs.find((item) => item.key === key);
+    if (!config) return;
+    if (!assertParentReady(config)) return;
+    activeKey.value = key;
+    editorModel.value = withParentFields({}, config);
     editorVisible.value = true;
   }
 
@@ -136,6 +159,54 @@
     });
   }
 
+  function imageMimeFromName(fileName?: string) {
+    const ext = String(fileName || '').split('.').pop()?.toLowerCase();
+    const mimeMap: Record<string, string> = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      bmp: 'image/bmp',
+      webp: 'image/webp',
+    };
+    return (ext && mimeMap[ext]) || 'image/*';
+  }
+
+  function arrayBufferToBase64(bytes: number[]) {
+    let binary = '';
+    bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte & 0xff);
+    });
+    return btoa(binary);
+  }
+
+  function normalizeAttachment(value: unknown) {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return arrayBufferToBase64(value);
+    return '';
+  }
+
+  async function openPreview(record: CitRecord) {
+    previewVisible.value = true;
+    previewLoading.value = true;
+    previewImageSrc.value = '';
+    previewRecord.value = record;
+    try {
+      const detail = record.id ? await queryCitById('decMarkLob', record.id) : record;
+      const attachment = normalizeAttachment(detail.attachment || record.attachment);
+      if (!attachment) {
+        previewVisible.value = false;
+        createMessage.warning('当前附件没有可预览内容');
+        return;
+      }
+      previewRecord.value = detail;
+      previewImageSrc.value = attachment.startsWith('data:') ? attachment : `data:${imageMimeFromName(detail.attachName)};base64,${attachment}`;
+    } finally {
+      previewLoading.value = false;
+    }
+  }
+
   function placeholder(item: CitFieldConfig) {
     if (item.placeholder) return item.placeholder;
     return item.type === 'select' || item.type === 'date' ? `请选择${item.label}` : `请输入${item.label}`;
@@ -152,6 +223,14 @@
 
   function selectLoading(item: CitFieldConfig) {
     return Boolean(item.optionSource && props.optionLoadingMap?.[item.optionSource]);
+  }
+
+  function filterSelectOption(input: string, option: any) {
+    const keyword = input.trim().toLowerCase();
+    if (!keyword) return true;
+    const label = String(option?.label ?? '').toLowerCase();
+    const value = String(option?.value ?? '').toLowerCase();
+    return label.includes(keyword) || value.includes(keyword);
   }
 
   function handleSelectFocus(item: CitFieldConfig) {
@@ -180,6 +259,8 @@
     { immediate: true }
   );
   watch([activeKey, () => props.headId, () => props.goodsId], () => loadCurrent(), { immediate: true });
+
+  defineExpose({ loadCurrent, activate, openAddByKey });
 </script>
 
 <template>
@@ -191,7 +272,7 @@
         <a-button v-if="expandable" :preIcon="expanded ? 'ant-design:fullscreen-exit-outlined' : 'ant-design:fullscreen-outlined'" @click="toggleExpanded">
           {{ expanded ? '收起' : '展开' }}
         </a-button>
-        <a-button preIcon="ant-design:plus-outlined" type="primary" @click="openAdd">新增</a-button>
+        <a-button v-if="!currentConfig?.hideAdd" preIcon="ant-design:plus-outlined" type="primary" @click="openAdd">新增</a-button>
       </div>
     </div>
     <a-tabs v-model:activeKey="activeKey" size="small">
@@ -210,7 +291,8 @@
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'action'">
           <a-space :size="4">
-            <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
+            <a-button v-if="currentConfig?.key === 'decMarkLob'" type="link" size="small" @click="openPreview(record)">预览</a-button>
+            <a-button v-else type="link" size="small" @click="openEdit(record)">编辑</a-button>
             <a-button type="link" size="small" danger @click="handleDelete(record)">删除</a-button>
           </a-space>
         </template>
@@ -220,7 +302,7 @@
     <a-modal v-model:open="editorVisible" :title="editorTitle" :confirmLoading="editorSaving" width="760px" @ok="handleSave">
       <a-form ref="formRef" class="related-data-tabs__form" :model="editorModel" :rules="editorRules" :label-col="{ style: { width: '112px' } }">
         <a-row :gutter="[8, 2]">
-          <a-col v-for="item in currentConfig?.formFields || []" :key="item.field" :xs="24" :md="item.span === 24 ? 24 : 12">
+          <a-col v-for="item in (currentConfig?.formFields || []).filter((field) => !field.hidden)" :key="item.field" :xs="24" :md="item.span === 24 ? 24 : 12">
             <a-form-item :label="item.label" :name="item.field" :class="{ 'is-required-field': item.required }">
               <a-select
               size="small"
@@ -230,7 +312,7 @@
                 :loading="selectLoading(item)"
                 :disabled="fieldDisabled(item)"
                 :placeholder="placeholder(item)"
-                :filterOption="!item.optionSource"
+                :filterOption="filterSelectOption"
                 optionFilterProp="label"
                 showSearch
                 allowClear
@@ -276,6 +358,13 @@
         </a-row>
       </a-form>
     </a-modal>
+
+    <a-modal v-model:open="previewVisible" :title="previewRecord.attachName || '附件预览'" width="760px" :footer="null">
+      <div class="related-data-tabs__preview">
+        <a-spin v-if="previewLoading" />
+        <img v-else-if="previewImageSrc" class="related-data-tabs__preview-image" :src="previewImageSrc" alt="附件预览" />
+      </div>
+    </a-modal>
   </section>
 </template>
 
@@ -315,6 +404,23 @@
 
     &__form {
       padding-top: 8px;
+    }
+
+    &__preview {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 240px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+    }
+
+    &__preview-image {
+      display: block;
+      max-width: 100%;
+      max-height: 70vh;
+      object-fit: contain;
     }
 
     :deep(.ant-tabs-nav) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed, reactive, ref, shallowRef, watch } from 'vue';
+  import { computed, nextTick, reactive, ref, shallowRef, watch } from 'vue';
   import { Modal } from 'ant-design-vue';
   import { cloneDeep } from 'lodash-es';
   import { useMessage } from '/@/hooks/web/useMessage';
@@ -23,6 +23,22 @@
   const savingMap = reactive<Record<string, boolean>>({});
   const rowsMap = ref<Record<string, CitRecord[]>>({});
   const modelMap = ref<Record<string, CitRecord>>({});
+  const editorVisible = shallowRef(false);
+  const editorSaving = shallowRef(false);
+  const editorConfig = shallowRef<RelatedTabConfig>();
+  const editorModel = ref<CitRecord>({});
+  const editorFormRef = ref<any>();
+
+  const editorTitle = computed(() => `新增${editorConfig.value?.title || ''}`);
+  const editorRules = computed(() => {
+    const result: Record<string, any[]> = {};
+    editorConfig.value?.formFields.forEach((item) => {
+      if (item.required) {
+        result[item.field] = [{ required: true, message: `请输入${item.label}`, trigger: item.type === 'select' ? 'change' : 'blur' }];
+      }
+    });
+    return result;
+  });
 
   function parentIdOf(config: RelatedTabConfig) {
     return config.parentSource === 'head' ? props.headId : props.goodsId;
@@ -96,7 +112,10 @@
 
   function newRecord(config: RelatedTabConfig) {
     if (!assertParentReady(config)) return;
-    modelMap.value = { ...modelMap.value, [config.key]: withParentFields(config, {}) };
+    editorConfig.value = config;
+    editorModel.value = withParentFields(config, {});
+    editorVisible.value = true;
+    nextTick(() => editorFormRef.value?.clearValidate());
   }
 
   function selectRecord(config: RelatedTabConfig, record: CitRecord) {
@@ -112,6 +131,22 @@
       await loadConfig(config);
     } finally {
       savingMap[config.key] = false;
+    }
+  }
+
+  async function saveEditorRecord() {
+    const config = editorConfig.value;
+    if (!config || !assertParentReady(config)) return;
+    await editorFormRef.value?.validate();
+    editorSaving.value = true;
+    try {
+      const payload = withParentFields(config, editorModel.value);
+      await saveCitEntity(config.key, payload, false);
+      editorVisible.value = false;
+      editorModel.value = {};
+      await loadConfig(config);
+    } finally {
+      editorSaving.value = false;
     }
   }
 
@@ -151,6 +186,14 @@
     return Boolean(item.optionSource && props.optionLoadingMap?.[item.optionSource]);
   }
 
+  function filterSelectOption(input: string, option: any) {
+    const keyword = input.trim().toLowerCase();
+    if (!keyword) return true;
+    const label = String(option?.label ?? '').toLowerCase();
+    const value = String(option?.value ?? '').toLowerCase();
+    return label.includes(keyword) || value.includes(keyword);
+  }
+
   function handleSelectFocus(item: CitFieldConfig) {
     if (item.optionSource) emit('optionSearch', item.optionSource);
   }
@@ -170,11 +213,15 @@
   }
 
   function tableHeight(config: RelatedTabConfig) {
-    return config.key === 'decContainer' ? 166 : 92;
+    if (config.key === 'decContainer') return 166;
+    if (config.key === 'decLicenseDocus') return 255;
+    return 92;
   }
 
   function tablePageSize(config: RelatedTabConfig) {
-    return config.key === 'decContainer' ? 5 : 3;
+    if (config.key === 'decContainer') return 5;
+    if (config.key === 'decLicenseDocus') return 8;
+    return 3;
   }
 
   watch(
@@ -216,7 +263,7 @@
             :loading="selectLoading(item)"
             :disabled="fieldDisabled(item)"
             :placeholder="placeholder(item)"
-            :filterOption="!item.optionSource"
+            :filterOption="filterSelectOption"
             optionFilterProp="label"
             size="small"
             showSearch
@@ -244,6 +291,73 @@
         </a-form-item>
       </a-form>
     </article>
+
+    <a-modal v-model:open="editorVisible" :title="editorTitle" :confirmLoading="editorSaving" width="660px" @ok="saveEditorRecord">
+      <a-form
+        v-if="editorConfig"
+        ref="editorFormRef"
+        class="related-side-panels__modal-form"
+        :model="editorModel"
+        :rules="editorRules"
+        :label-col="{ style: { width: '112px' } }"
+      >
+        <a-row :gutter="[8, 2]">
+          <a-col v-for="item in visibleFields(editorConfig)" :key="item.field" :xs="24" :md="item.span === 24 ? 24 : 12">
+            <a-form-item :label="item.label" :name="item.field" :class="{ 'is-required-field': item.required }">
+              <a-select
+                v-if="item.type === 'select'"
+                v-model:value="editorModel[item.field]"
+                :options="selectOptions(item)"
+                :loading="selectLoading(item)"
+                :disabled="fieldDisabled(item)"
+                :placeholder="placeholder(item)"
+                :filterOption="filterSelectOption"
+                optionFilterProp="label"
+                size="small"
+                showSearch
+                allowClear
+                @focus="handleSelectFocus(item)"
+                @search="handleSelectSearch(item, $event)"
+              />
+              <a-date-picker
+                v-else-if="item.type === 'date'"
+                v-model:value="editorModel[item.field]"
+                valueFormat="YYYY-MM-DD"
+                :disabled="fieldDisabled(item)"
+                :placeholder="placeholder(item)"
+                size="small"
+              />
+              <a-input-number
+                v-else-if="item.type === 'number'"
+                v-model:value="editorModel[item.field]"
+                :disabled="fieldDisabled(item)"
+                :placeholder="placeholder(item)"
+                :min="0"
+                size="small"
+              />
+              <a-textarea
+                v-else-if="item.type === 'textarea'"
+                v-model:value="editorModel[item.field]"
+                :disabled="fieldDisabled(item)"
+                :placeholder="placeholder(item)"
+                :maxlength="item.maxLength"
+                :autoSize="{ minRows: 1, maxRows: 3 }"
+                size="small"
+              />
+              <a-input
+                v-else
+                v-model:value="editorModel[item.field]"
+                :disabled="fieldDisabled(item)"
+                :placeholder="placeholder(item)"
+                :maxlength="item.maxLength"
+                size="small"
+                allowClear
+              />
+            </a-form-item>
+          </a-col>
+        </a-row>
+      </a-form>
+    </a-modal>
   </section>
 </template>
 
@@ -281,6 +395,62 @@
     &__form {
       padding: 6px 8px 8px;
       border-top: 1px solid #f0f0f0;
+    }
+
+    &__modal-form {
+      padding-top: 8px;
+
+      :deep(.ant-form-item) {
+        margin-bottom: 8px;
+      }
+
+      :deep(.ant-form-item-label) {
+        padding-right: 8px;
+        line-height: 28px;
+        text-align: right;
+      }
+
+      :deep(.ant-form-item-label > label) {
+        height: 28px;
+        color: #606266;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      :deep(.ant-input),
+      :deep(.ant-input-number),
+      :deep(.ant-picker),
+      :deep(.ant-select-selector) {
+        width: 100%;
+        min-height: 28px;
+        font-size: 13px;
+        border-radius: 4px;
+      }
+
+      :deep(.ant-input),
+      :deep(.ant-input-number-input),
+      :deep(.ant-picker-input > input) {
+        height: 26px;
+        line-height: 26px;
+      }
+
+      :deep(.ant-input-number),
+      :deep(.ant-picker),
+      :deep(.ant-select-single .ant-select-selector) {
+        height: 28px;
+      }
+
+      :deep(.ant-select-single .ant-select-selector .ant-select-selection-item),
+      :deep(.ant-select-single .ant-select-selector .ant-select-selection-placeholder) {
+        line-height: 26px;
+      }
+
+      :deep(.is-required-field .ant-input:not([disabled])),
+      :deep(.is-required-field .ant-input-number:not(.ant-input-number-disabled)),
+      :deep(.is-required-field .ant-picker:not(.ant-picker-disabled)),
+      :deep(.is-required-field .ant-select-selector) {
+        background-color: #fffbe6;
+      }
     }
 
     :deep(.ant-btn) {

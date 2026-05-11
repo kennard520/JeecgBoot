@@ -38,6 +38,7 @@ export interface CitSelectOption {
 export type ParaOptionSourceKey =
   | 'cert'
   | 'complex'
+  | 'correlationReason'
   | 'country'
   | 'currency'
   | 'customs'
@@ -67,6 +68,7 @@ export interface CitFieldConfig {
   optionSource?: ParaOptionSourceKey;
   maxLength?: number;
   span?: number;
+  hidden?: boolean;
 }
 
 export interface CitSectionConfig {
@@ -102,6 +104,14 @@ export interface DecHead extends CitRecord {
   ieFlag?: string;
   customMaster?: string;
   iePort?: string;
+  promiseItmes?: string;
+  businessItems?: string;
+  purpOrgCode?: string;
+  despDate?: string;
+  blNo?: string;
+  specDeclFlag?: string;
+  correlationNo?: string;
+  correlationReasonFlag?: string;
   tradeName?: string;
   ownerName?: string;
   agentName?: string;
@@ -126,6 +136,7 @@ export interface RelatedTabConfig {
   title: string;
   parentField: 'decHeadId' | 'decListId' | 'decGoodsLimitId' | 'trnHeadId' | 'trnListId' | 'trnContainerId';
   parentSource: 'head' | 'goods';
+  hideAdd?: boolean;
   columns: CitTableColumn[];
   formFields: CitFieldConfig[];
 }

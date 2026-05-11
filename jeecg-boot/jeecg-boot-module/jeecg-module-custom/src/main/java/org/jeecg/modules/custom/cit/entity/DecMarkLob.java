@@ -50,7 +50,7 @@ public class DecMarkLob implements Serializable {
     @Schema(description = "附件名称")
     private String attachName;
     /**
-     * 附件类型；字段代码: AttachType；数据类型: String；长度: 2；暂存必填: 否；申报必填: 否；说明: 附件类型
+     * 附件类型；字段代码: AttachType；数据类型: String；长度: 20；暂存必填: 否；申报必填: 否；说明: 附件类型，保存图片文件扩展名，如 png、jpg、jpeg、webp
      */
     @TableField("attach_type")
     @Excel(name = "附件类型", width = 15)

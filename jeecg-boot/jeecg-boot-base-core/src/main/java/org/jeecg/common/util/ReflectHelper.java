@@ -305,6 +305,16 @@ public class ReflectHelper {
             } catch (NoSuchFieldException e) {
                 //e.printStackTrace();
             }
+            if (field == null && name != null && name.length() > 1) {
+                String compatibleName = Character.toLowerCase(name.charAt(0)) + name.substring(1);
+                if (!compatibleName.equals(name)) {
+                    try {
+                        field = clazz.getDeclaredField(compatibleName);
+                    } catch (NoSuchFieldException e) {
+                        //e.printStackTrace();
+                    }
+                }
+            }
 
             //如果为空，则去父类查找字段
             if (field == null) {
@@ -312,6 +322,15 @@ public class ReflectHelper {
                 List<Field> searchFields = allFields.stream().filter(a -> a.getName().equals(name)).collect(Collectors.toList());
                 if(searchFields!=null && searchFields.size()>0){
                     field = searchFields.get(0);
+                }
+                if (field == null && name != null && name.length() > 1) {
+                    String compatibleName = Character.toLowerCase(name.charAt(0)) + name.substring(1);
+                    if (!compatibleName.equals(name)) {
+                        searchFields = allFields.stream().filter(a -> a.getName().equals(compatibleName)).collect(Collectors.toList());
+                        if(searchFields!=null && searchFields.size()>0){
+                            field = searchFields.get(0);
+                        }
+                    }
                 }
             }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed, ref } from 'vue';
+  import { computed, nextTick, ref } from 'vue';
   import type { CitFieldConfig, CitSelectOption, CitTableColumn, DecList, ParaOptionLoadingMap, ParaOptionMap, ParaOptionSourceKey } from '../types';
 
   const props = defineProps<{
@@ -15,7 +15,7 @@
 
   const emit = defineEmits<{
     save: [];
-    reset: [];
+    create: [record: DecList, close: () => void];
     select: [record: DecList];
     delete: [record: DecList];
     optionSearch: [source: ParaOptionSourceKey, keyword?: string];
@@ -23,6 +23,9 @@
 
   const model = defineModel<DecList>({ required: true });
   const formRef = ref<any>();
+  const addFormRef = ref<any>();
+  const addVisible = ref(false);
+  const addModel = ref<DecList>({});
 
   const tableColumns = computed(() => [
     ...props.columns,
@@ -82,6 +85,14 @@
     return Boolean(item.optionSource && props.optionLoadingMap?.[item.optionSource]);
   }
 
+  function filterSelectOption(input: string, option: any) {
+    const keyword = input.trim().toLowerCase();
+    if (!keyword) return true;
+    const label = String(option?.label ?? '').toLowerCase();
+    const value = String(option?.value ?? '').toLowerCase();
+    return label.includes(keyword) || value.includes(keyword);
+  }
+
   function handleSelectFocus(item: CitFieldConfig) {
     if (item.optionSource) {
       emit('optionSearch', item.optionSource);
@@ -94,19 +105,42 @@
     }
   }
 
-  function handleSelectChange(item: CitFieldConfig, option: CitSelectOption | CitSelectOption[]) {
+  function handleSelectChange(target: DecList, item: CitFieldConfig, option?: CitSelectOption | CitSelectOption[]) {
     if (item.field !== 'codeTs') return;
     const sourceRecord = Array.isArray(option) ? option[0]?.sourceRecord : option?.sourceRecord;
     if (!sourceRecord) return;
     if (sourceRecord.gName) {
-      model.value.gName = sourceRecord.gName;
+      target.gName = sourceRecord.gName;
     }
-    if (sourceRecord.unit1 && !model.value.firstUnit) {
-      model.value.firstUnit = sourceRecord.unit1;
+    if (sourceRecord.unit1 && !target.firstUnit) {
+      target.firstUnit = sourceRecord.unit1;
     }
-    if (sourceRecord.unit2 && !model.value.secondUnit) {
-      model.value.secondUnit = sourceRecord.unit2;
+    if (sourceRecord.unit2 && !target.secondUnit) {
+      target.secondUnit = sourceRecord.unit2;
     }
+  }
+
+  function nextGoodsNo() {
+    const maxNo = props.rows.reduce((max, item) => {
+      const current = Number(item.gNo);
+      return Number.isFinite(current) ? Math.max(max, current) : max;
+    }, 0);
+    return maxNo + 1;
+  }
+
+  function openAddModal() {
+    if (!props.hasHead) return;
+    addModel.value = { gNo: nextGoodsNo() };
+    addVisible.value = true;
+    nextTick(() => addFormRef.value?.clearValidate());
+  }
+
+  async function handleCreate() {
+    await addFormRef.value?.validate();
+    emit('create', { ...addModel.value }, () => {
+      addVisible.value = false;
+      addModel.value = {};
+    });
   }
 </script>
 
@@ -115,7 +149,7 @@
     <div class="goods-section__title">
       <span>报关单表体</span>
       <div class="goods-section__actions">
-        <a-button preIcon="ant-design:plus-outlined" type="primary" :disabled="!hasHead" @click="emit('reset')">新增</a-button>
+        <a-button preIcon="ant-design:plus-outlined" type="primary" :disabled="!hasHead" @click="openAddModal">新增</a-button>
         <a-button preIcon="ant-design:save-outlined" type="primary" :disabled="!hasHead" :loading="saving" @click="handleSave">暂存</a-button>
       </div>
     </div>
@@ -170,13 +204,13 @@
               :loading="selectLoading(item)"
               :placeholder="placeholder(item)"
               :disabled="!hasHead"
-              :filterOption="!item.optionSource"
+              :filterOption="filterSelectOption"
               optionFilterProp="label"
               showSearch
               allowClear
               @focus="handleSelectFocus(item)"
               @search="handleSelectSearch(item, $event)"
-              @change="(_, option) => handleSelectChange(item, option)"
+              @change="(_, option) => handleSelectChange(model, item, option)"
             />
             <a-input
             size="small"
@@ -191,6 +225,55 @@
         </a-col>
       </a-row>
     </a-form>
+
+    <a-modal v-model:open="addVisible" title="新增商品明细" :confirmLoading="saving" width="760px" @ok="handleCreate">
+      <a-form ref="addFormRef" class="goods-section__form goods-section__modal-form" :model="addModel" :rules="rules" :label-col="{ style: { width: '120px' } }">
+        <a-row :gutter="[8, 0]">
+          <a-col v-for="item in fields" :key="item.field" :xs="24" :md="item.span === 24 ? 24 : 12">
+            <a-form-item :label="item.label" :name="item.field" :class="{ 'is-required-field': item.required }">
+              <a-input-number
+                v-if="item.type === 'number'"
+                v-model:value="addModel[item.field]"
+                size="small"
+                :placeholder="placeholder(item)"
+                :min="0"
+              />
+              <a-textarea
+                v-else-if="item.type === 'textarea'"
+                v-model:value="addModel[item.field]"
+                size="small"
+                :placeholder="placeholder(item)"
+                :maxlength="item.maxLength"
+                :autoSize="{ minRows: 1, maxRows: 2 }"
+              />
+              <a-select
+                v-else-if="item.type === 'select'"
+                v-model:value="addModel[item.field]"
+                size="small"
+                :options="selectOptions(item)"
+                :loading="selectLoading(item)"
+                :placeholder="placeholder(item)"
+                :filterOption="filterSelectOption"
+                optionFilterProp="label"
+                showSearch
+                allowClear
+                @focus="handleSelectFocus(item)"
+                @search="handleSelectSearch(item, $event)"
+                @change="(_, option) => handleSelectChange(addModel, item, option)"
+              />
+              <a-input
+                v-else
+                v-model:value="addModel[item.field]"
+                size="small"
+                :placeholder="placeholder(item)"
+                :maxlength="item.maxLength"
+                allowClear
+              />
+            </a-form-item>
+          </a-col>
+        </a-row>
+      </a-form>
+    </a-modal>
   </section>
 </template>
 
@@ -222,6 +305,59 @@
     &__form {
       padding: 10px 12px 0;
       border-top: 1px solid #f0f0f0;
+    }
+
+    &__modal-form {
+      padding: 8px 0 0;
+      border-top: 0;
+
+      :deep(.ant-form-item) {
+        margin-bottom: 8px;
+      }
+
+      :deep(.ant-form-item-label) {
+        padding-right: 8px;
+        line-height: 28px;
+        text-align: right;
+      }
+
+      :deep(.ant-form-item-label > label) {
+        height: 28px;
+        color: #606266;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      :deep(.ant-input),
+      :deep(.ant-input-number),
+      :deep(.ant-select-selector) {
+        width: 100%;
+        min-height: 28px;
+        font-size: 13px;
+        border-radius: 4px;
+      }
+
+      :deep(.ant-input),
+      :deep(.ant-input-number-input) {
+        height: 26px;
+        line-height: 26px;
+      }
+
+      :deep(.ant-input-number),
+      :deep(.ant-select-single .ant-select-selector) {
+        height: 28px;
+      }
+
+      :deep(.ant-select-single .ant-select-selector .ant-select-selection-item),
+      :deep(.ant-select-single .ant-select-selector .ant-select-selection-placeholder) {
+        line-height: 26px;
+      }
+
+      :deep(.is-required-field .ant-input:not([disabled])),
+      :deep(.is-required-field .ant-input-number:not(.ant-input-number-disabled)),
+      :deep(.is-required-field .ant-select-selector) {
+        background-color: #fffbe6;
+      }
     }
 
     :deep(.ant-table-thead > tr > th) {

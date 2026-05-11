@@ -457,6 +457,13 @@ public class DecHead implements Serializable {
     @Schema(description = "价格说明")
     private String promiseItmes;
     /**
+     * 业务事项：说明：1-勾选、0-未勾选 第一位税单无纸化 第二位担保验放 第三位跨境电商海外仓 第四位组合港 第五位自报自享
+     */
+    @TableField("business_items")
+    @Excel(name = "业务事项", width = 15)
+    @Schema(description = "业务事项")
+    private String businessItems;
+    /**
      * 贸易国别；字段代码: TradeAreaCode；数据类型: String；长度: 3；暂存必填: 是；申报必填: 是
      */
     @TableField("trade_area_code")
@@ -552,6 +559,13 @@ public class DecHead implements Serializable {
     @Schema(description = "卸毕日期")
     private Date cmplDschrgDt;
     /**
+     * 关联号码；字段代码: CorrelationNo；数据类型: String；长度: 500；暂存必填: 否；申报必填: 否
+     */
+    @TableField("correlation_no")
+    @Excel(name = "关联号码", width = 15)
+    @Schema(description = "关联号码")
+    private String correlationNo;
+    /**
      * 关联理由；字段代码: CorrelationReasonFlag；数据类型: String；长度: 2；暂存必填: 否；申报必填: 否；说明: 关联理由【关联报检号的关联理由】
      */
     @TableField("correlation_reason_flag")
@@ -642,13 +656,6 @@ public class DecHead implements Serializable {
     @Excel(name = "境内收发货人名称（外文）", width = 15)
     @Schema(description = "境内收发货人名称（外文）")
     private String domesticConsigneeEname;
-    /**
-     * 关联号码；字段代码: CorrelationNo；数据类型: String；长度: 500；暂存必填: 否；申报必填: 否
-     */
-    @TableField("correlation_no")
-    @Excel(name = "关联号码", width = 15)
-    @Schema(description = "关联号码")
-    private String correlationNo;
     /**
      * EDI申报备注；字段代码: EdiRemark；数据类型: String；长度: 128；暂存必填: 否；申报必填: 否
      */

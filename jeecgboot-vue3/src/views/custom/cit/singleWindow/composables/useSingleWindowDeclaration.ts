@@ -5,17 +5,18 @@ import { useMessage } from '/@/hooks/web/useMessage';
 import { deleteCitEntity, queryCitRecords, saveCitEntity } from '../cit.api';
 import type { CitRecord, DecHead, DecList } from '../types';
 
-function createEmptyHead(): DecHead {
+export function createEmptyHead(): DecHead {
   return {
     ieFlag: 'I',
     declTrnRel: '0',
     ediId: '1',
     entryType: '0',
-    promiseItmes: '99999',
+    promiseItmes: '00000',
+    businessItems: '00000',
   };
 }
 
-function createEmptyGoods(decHeadId?: string | number, nextNo = 1): DecList {
+export function createEmptyGoods(decHeadId?: string | number, nextNo = 1): DecList {
   return {
     decHeadId,
     gNo: nextNo,
@@ -96,19 +97,28 @@ export function useSingleWindowDeclaration(initialHeadId?: string | number) {
     createMessage.info('已复制表头信息，请暂存后再维护商品明细');
   }
 
-  async function saveHead() {
+  async function saveHeadRecord(record: DecHead) {
     savingHead.value = true;
-    const isUpdate = Boolean(headForm.value.id);
+    const isUpdate = Boolean(record.id);
     try {
-      await saveCitEntity('decHead', headForm.value, isUpdate);
+      await saveCitEntity('decHead', record, isUpdate);
       createMessage.success(isUpdate ? '表头已更新' : '表头已暂存');
       const rows = await loadHeadRows();
       if (!isUpdate && rows[0]) {
         await selectHead(rows[0]);
+      } else if (record.id) {
+        const nextRecord = rows.find((item) => item.id === record.id);
+        if (nextRecord) {
+          await selectHead(nextRecord);
+        }
       }
     } finally {
       savingHead.value = false;
     }
+  }
+
+  async function saveHead() {
+    await saveHeadRecord(headForm.value);
   }
 
   function deleteHead() {
@@ -137,14 +147,14 @@ export function useSingleWindowDeclaration(initialHeadId?: string | number) {
     goodsForm.value = createEmptyGoods(currentHeadId.value, goodsRows.value.length + 1);
   }
 
-  async function saveGoods() {
+  async function saveGoodsRecord(record: DecList) {
     if (!currentHeadId.value) {
       createMessage.warning('请先暂存表头，再维护商品明细');
       return;
     }
     savingGoods.value = true;
     const payload = {
-      ...goodsForm.value,
+      ...record,
       decHeadId: currentHeadId.value,
     };
     try {
@@ -154,6 +164,10 @@ export function useSingleWindowDeclaration(initialHeadId?: string | number) {
     } finally {
       savingGoods.value = false;
     }
+  }
+
+  async function saveGoods() {
+    await saveGoodsRecord(goodsForm.value);
   }
 
   function deleteGoods(record: DecList) {
@@ -204,10 +218,12 @@ export function useSingleWindowDeclaration(initialHeadId?: string | number) {
     selectHead,
     resetHead,
     copyHead,
+    saveHeadRecord,
     saveHead,
     deleteHead,
     selectGoods,
     resetGoods,
+    saveGoodsRecord,
     saveGoods,
     deleteGoods,
     submitDeclaration,

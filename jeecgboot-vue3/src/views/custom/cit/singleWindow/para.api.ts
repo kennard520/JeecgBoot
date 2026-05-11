@@ -6,6 +6,7 @@ const PARA_BASE_URL = '/custom/para';
 const paraApiPathMap = {
   paraCert: `${PARA_BASE_URL}/paraCert`,
   paraComplex: `${PARA_BASE_URL}/paraComplex`,
+  paraCorrelationReason: `${PARA_BASE_URL}/paraCorrelationReason`,
   paraCountry: `${PARA_BASE_URL}/paraCountry`,
   paraCurr: `${PARA_BASE_URL}/paraCurr`,
   paraCustomsRel: `${PARA_BASE_URL}/paraCustomsRel`,
@@ -35,6 +36,7 @@ interface ParaOptionSourceConfig {
 const paraOptionSourceMap: Record<ParaOptionSourceKey, ParaOptionSourceConfig> = {
   cert: { entityKey: 'paraCert', valueField: 'certCo', textField: 'certName', pageSize: 500 },
   complex: { entityKey: 'paraComplex', valueField: 'codeTS', textField: 'gName', pageSize: 80, autoload: false },
+  correlationReason: { entityKey: 'paraCorrelationReason', valueField: 'code', textField: 'text', pageSize: 200 },
   country: { entityKey: 'paraCountry', valueField: 'countryCo', textField: 'countryNa', pageSize: 3000 },
   currency: { entityKey: 'paraCurr', valueField: 'currCode', textField: 'currName', pageSize: 500 },
   customs: { entityKey: 'paraCustomsRel', valueField: 'customsCode', textField: 'customsName', pageSize: 1000 },
@@ -68,18 +70,13 @@ function getRecordValue(record: CitRecord, field: string) {
   return matchedKey ? record[matchedKey] : undefined;
 }
 
-function hasChinese(value: string) {
-  return /[\u4e00-\u9fa5]/.test(value);
-}
-
-function buildSearchParams(config: ParaOptionSourceConfig, keyword?: string) {
+function buildSearchParams(config: ParaOptionSourceConfig, keyword?: string, searchField?: string) {
   const params: CitRecord = {
     pageNo: 1,
     pageSize: config.pageSize || 500,
   };
   const text = normalizeValue(keyword);
-  if (text) {
-    const searchField = hasChinese(text) ? config.textField : config.valueField;
+  if (text && searchField) {
     params[searchField] = `*${text}*`;
   }
   return params;
@@ -117,6 +114,9 @@ export function isParaSourceAutoload(source: ParaOptionSourceKey) {
 
 export async function queryParaOptions(source: ParaOptionSourceKey, keyword?: string) {
   const config = paraOptionSourceMap[source];
-  const rows = await queryParaRecords(config.entityKey, buildSearchParams(config, keyword));
+  const text = normalizeValue(keyword);
+  const searchFields = text ? Array.from(new Set([config.valueField, config.textField])) : [undefined];
+  const rowsGroup = await Promise.all(searchFields.map((field) => queryParaRecords(config.entityKey, buildSearchParams(config, text, field))));
+  const rows = rowsGroup.flat();
   return uniqueOptions(rows.map((item) => toOption(item, config)).filter(Boolean) as CitSelectOption[]);
 }
