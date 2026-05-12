@@ -17,6 +17,7 @@
     save: [];
     markLobUpload: [file: File];
     decUserAdd: [];
+    decCopLimitAdd: [];
     optionSearch: [source: ParaOptionSourceKey, keyword?: string];
   }>();
 
@@ -265,6 +266,7 @@
           <a-col v-if="item.field === 'correlationReasonFlag'" :xs="24" :md="12" :xl="4">
             <div class="declaration-head-form__inline-action" style="margin-top: 12px">
               <a-button preIcon="ant-design:user-add-outlined" type="primary" size="small" @click="emit('decUserAdd')">使用人信息</a-button>
+              <a-button preIcon="ant-design:solution-outlined" type="primary" size="small" @click="emit('decCopLimitAdd')">企业资质</a-button>
             </div>
           </a-col>
         </template>
@@ -418,8 +420,14 @@
     &__inline-action {
       display: flex;
       align-items: center;
-      height: 28px;
+      gap: 4px;
+      min-height: 28px;
       margin-bottom: 8px;
+      flex-wrap: wrap;
+
+      :deep(.ant-btn) {
+        padding: 0 6px;
+      }
     }
 
     :deep(.ant-row) {

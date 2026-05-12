@@ -326,9 +326,13 @@ export const relatedTabConfigs: RelatedTabConfig[] = [
     title: '企业资质',
     parentField: 'decHeadId',
     parentSource: 'head',
-    columns: [{ title: '资质类别代码', dataIndex: 'entQualifTypeCode', width: 150 }],
+    columns: [
+      { title: '资质编号', dataIndex: 'entQualifNo', width: 180, ellipsis: true },
+      { title: '资质类别代码', dataIndex: 'entQualifTypeCode', width: 150 },
+    ],
     formFields: [
-      ...compactHeadFields.slice(0, 1),
+      { ...compactHeadFields[0], hidden: true },
+      { field: 'entQualifNo', label: '资质编号', maxLength: 40 },
       { field: 'entQualifTypeCode', label: '资质类别代码', required: true, maxLength: 5 },
     ],
   },

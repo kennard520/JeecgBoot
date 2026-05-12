@@ -180,8 +180,20 @@
     await moreRelatedTabsRef.value?.openAddByKey?.('decUser');
   }
 
+  async function handleAddDecCopLimit() {
+    if (!currentHeadId.value) {
+      createMessage.warning('请先保存表头，再维护企业资质信息');
+      return;
+    }
+    await moreRelatedTabsRef.value?.openAddByKey?.('decCopLimit');
+  }
+
   function handleAddNewDecUser() {
     createMessage.warning('请先保存新增报关单，再维护使用人信息');
+  }
+
+  function handleAddNewDecCopLimit() {
+    createMessage.warning('请先保存新增报关单，再维护企业资质信息');
   }
 
   async function handleSelectHead(record: DecHead) {
@@ -215,6 +227,7 @@
           @save="handleSaveHead"
           @mark-lob-upload="handleUploadMarkLob"
           @dec-user-add="handleAddDecUser"
+          @dec-cop-limit-add="handleAddDecCopLimit"
           @option-search="loadParaOptions"
         />
         <GoodsSection
@@ -287,6 +300,7 @@
         @save="handleSaveNewHead"
         @mark-lob-upload="handleUploadNewMarkLob"
         @dec-user-add="handleAddNewDecUser"
+        @dec-cop-limit-add="handleAddNewDecCopLimit"
         @option-search="loadParaOptions"
       />
     </a-modal>
