@@ -2,6 +2,7 @@ export type CitEntityKey =
   | 'citAttributes'
   | 'decHead'
   | 'decList'
+  | 'decCiqVisa'
   | 'decContainer'
   | 'decLicenseDocus'
   | 'decRequestCert'
@@ -36,18 +37,22 @@ export interface CitSelectOption {
 }
 
 export type ParaOptionSourceKey =
+  | 'agreement'
   | 'cert'
   | 'complex'
   | 'correlationReason'
   | 'country'
+  | 'credential'
   | 'currency'
   | 'customs'
   | 'district'
   | 'entryPort'
+  | 'goodsAttr'
   | 'invtType'
   | 'levyMode'
   | 'levyType'
   | 'port'
+  | 'purpose'
   | 'tradeMode'
   | 'transac'
   | 'transport'
@@ -69,6 +74,8 @@ export interface CitFieldConfig {
   maxLength?: number;
   span?: number;
   hidden?: boolean;
+  multiple?: boolean;
+  valueChunkSize?: number;
 }
 
 export interface CitSectionConfig {
@@ -116,6 +123,10 @@ export interface DecHead extends CitRecord {
   ownerName?: string;
   agentName?: string;
   copName?: string;
+  domesticConsigneeEname?: string;
+  overseasConsignorCname?: string;
+  overseasConsignorAddr?: string;
+  cmplDschrgDt?: string;
 }
 
 export interface DecList extends CitRecord {
@@ -124,6 +135,12 @@ export interface DecList extends CitRecord {
   codeTs?: string;
   gName?: string;
   gModel?: string;
+  goodsSpec?: string;
+  produceDate?: string;
+  goodsAttr?: string;
+  purpose?: string;
+  rcepOrigPlaceCode?: string;
+  declGoodsEname?: string;
   gQty?: string | number;
   gUnit?: string;
   declPrice?: string | number;

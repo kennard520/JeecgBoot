@@ -8,6 +8,7 @@ export const citApiPathMap: Record<CitEntityKey, string> = {
   citAttributes: `${CIT_BASE_URL}/citAttributes`,
   decHead: `${CIT_BASE_URL}/decHead`,
   decList: `${CIT_BASE_URL}/decList`,
+  decCiqVisa: `${CIT_BASE_URL}/decCiqVisa`,
   decContainer: `${CIT_BASE_URL}/decContainer`,
   decLicenseDocus: `${CIT_BASE_URL}/decLicenseDocus`,
   decRequestCert: `${CIT_BASE_URL}/decRequestCert`,

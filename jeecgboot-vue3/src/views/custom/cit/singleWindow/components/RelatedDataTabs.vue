@@ -4,7 +4,7 @@
   import { cloneDeep } from 'lodash-es';
   import { useMessage } from '/@/hooks/web/useMessage';
   import { deleteCitEntity, queryCitById, queryCitRecords, saveCitEntity } from '../cit.api';
-  import type { CitFieldConfig, CitRecord, ParaOptionLoadingMap, ParaOptionMap, ParaOptionSourceKey, RelatedTabConfig } from '../types';
+  import type { CitFieldConfig, CitRecord, CitSelectOption, ParaOptionLoadingMap, ParaOptionMap, ParaOptionSourceKey, RelatedTabConfig } from '../types';
 
   const props = defineProps<{
     headId?: string | number;
@@ -37,7 +37,6 @@
 
   const currentConfig = computed(() => props.configs.find((item) => item.key === activeKey.value) || props.configs[0]);
   const currentRows = computed(() => rowsMap.value[currentConfig.value?.key || ''] || []);
-  const currentParentId = computed(() => getParentId(currentConfig.value));
   const currentNeedsGoods = computed(() => currentConfig.value?.parentSource === 'goods');
   const editorTitle = computed(() => `${editorModel.value.id ? '编辑' : '新增'}${currentConfig.value?.title || ''}`);
   const tableColumns = computed(() => [
@@ -245,6 +244,29 @@
     }
   }
 
+  function recordValue(record: CitRecord | undefined, ...keys: string[]) {
+    if (!record) return undefined;
+    const normalizedMap = new Map(Object.keys(record).map((key) => [key.replace(/_/g, '').toLowerCase(), record[key]]));
+    for (const key of keys) {
+      const value = normalizedMap.get(key.replace(/_/g, '').toLowerCase());
+      if (value !== undefined && value !== null && value !== '') return value;
+    }
+    return undefined;
+  }
+
+  function applyCredentialDefaults(option?: CitSelectOption | CitSelectOption[]) {
+    const selected = Array.isArray(option) ? option[0] : option;
+    const sourceRecord = selected?.sourceRecord;
+    editorModel.value.applOri = sourceRecord ? String(recordValue(sourceRecord, 'count') ?? '') : '';
+    editorModel.value.applCopyQuan = sourceRecord ? String(recordValue(sourceRecord, 'subCount', 'sub_count') ?? '') : '';
+  }
+
+  function handleSelectChange(item: CitFieldConfig, option?: CitSelectOption | CitSelectOption[]) {
+    if (item.field === 'appCertCode') {
+      applyCredentialDefaults(option);
+    }
+  }
+
   function toggleExpanded() {
     emit('update:expanded', !props.expanded);
   }
@@ -260,7 +282,7 @@
   );
   watch([activeKey, () => props.headId, () => props.goodsId], () => loadCurrent(), { immediate: true });
 
-  defineExpose({ loadCurrent, activate, openAddByKey });
+  defineExpose({ loadCurrent, loadByKey, activate, openAddByKey });
 </script>
 
 <template>
@@ -318,6 +340,7 @@
                 allowClear
                 @focus="handleSelectFocus(item)"
                 @search="handleSelectSearch(item, $event)"
+                @change="(_value, option) => handleSelectChange(item, option)"
               />
               <a-date-picker
               size="small"

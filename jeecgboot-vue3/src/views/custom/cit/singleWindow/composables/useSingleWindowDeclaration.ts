@@ -67,8 +67,10 @@ export function useSingleWindowDeclaration(initialHeadId?: string | number) {
     }
     loadingGoods.value = true;
     try {
+      const selectedGoodsId = currentGoodsId.value;
       goodsRows.value = await queryCitRecords<DecList>('decList', { decHeadId: currentHeadId.value });
-      goodsForm.value = goodsRows.value[0] ? cloneDeep(goodsRows.value[0]) : createEmptyGoods(currentHeadId.value, 1);
+      const selectedGoods = goodsRows.value.find((item) => item.id === selectedGoodsId) || goodsRows.value[0];
+      goodsForm.value = selectedGoods ? cloneDeep(selectedGoods) : createEmptyGoods(currentHeadId.value, 1);
     } finally {
       loadingGoods.value = false;
     }

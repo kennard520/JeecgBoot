@@ -18,6 +18,7 @@
     markLobUpload: [file: File];
     decUserAdd: [];
     decCopLimitAdd: [];
+    ciqVisaAdd: [];
     optionSearch: [source: ParaOptionSourceKey, keyword?: string];
   }>();
 
@@ -263,10 +264,11 @@
               <span>不超过 1MB</span>
             </div>
           </a-col>
-          <a-col v-if="item.field === 'correlationReasonFlag'" :xs="24" :md="12" :xl="4">
+          <a-col v-if="item.field === 'correlationReasonFlag'" :xs="24" :md="12" :xl="8">
             <div class="declaration-head-form__inline-action" style="margin-top: 12px">
               <a-button preIcon="ant-design:user-add-outlined" type="primary" size="small" @click="emit('decUserAdd')">使用人信息</a-button>
               <a-button preIcon="ant-design:solution-outlined" type="primary" size="small" @click="emit('decCopLimitAdd')">企业资质</a-button>
+              <a-button preIcon="ant-design:file-protect-outlined" type="primary" size="small" @click="emit('ciqVisaAdd')">检验检疫签证申报要素</a-button>
             </div>
           </a-col>
         </template>

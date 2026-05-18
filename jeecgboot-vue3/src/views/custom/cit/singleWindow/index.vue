@@ -7,19 +7,45 @@
   import RelatedDataSidePanels from './components/RelatedDataSidePanels.vue';
   import RelatedDataTabs from './components/RelatedDataTabs.vue';
   import { goodsColumns, goodsFormFields, headListColumns, headSections, relatedTabConfigs, singleWindowParaOptionSources } from './cit.data';
-  import { saveCitEntity } from './cit.api';
+  import { deleteCitEntity, queryCitRecords, saveCitEntity } from './cit.api';
   import { useParaOptions } from './composables/useParaOptions';
   import { createEmptyHead, useSingleWindowDeclaration } from './composables/useSingleWindowDeclaration';
   import { useMessage } from '/@/hooks/web/useMessage';
   import type { CitFieldConfig, CitRecord, DecHead, DecList } from './types';
 
+  interface VisaCertificateRow extends CitRecord {
+    code: string;
+    name: string;
+    count?: string;
+    subCount?: string;
+    visaId?: string | number;
+  }
+
+  interface VisaElementForm extends CitRecord {
+    domesticConsigneeEname?: string;
+    overseasConsignorCname?: string;
+    overseasConsignorAddr?: string;
+    cmplDschrgDt?: string;
+    declGoodsEname?: string;
+  }
+
+  defineOptions({ name: 'CustomCitSingleWindow' });
+
   const headFormRef = ref<any>();
   const headAddFormRef = ref<any>();
   const moreRelatedTabsRef = ref<any>();
+  const visaFormRef = ref<any>();
   const headAddVisible = ref(false);
+  const visaVisible = ref(false);
   const headAddSaving = ref(false);
+  const visaLoading = ref(false);
+  const visaSaving = ref(false);
   const markLobUploading = ref(false);
   const headAddModel = ref<DecHead>(createEmptyHead());
+  const visaForm = ref<VisaElementForm>({});
+  const visaCertificateRows = ref<VisaCertificateRow[]>([]);
+  const visaSelectedCodes = ref<string[]>([]);
+  const visaExistingIds = ref<Array<string | number>>([]);
   const route = useRoute();
   const { createMessage } = useMessage();
   const { optionMap, optionLoadingMap, loadParaOptions, ensureParaOption } = useParaOptions(singleWindowParaOptionSources);
@@ -37,6 +63,7 @@
     currentGoodsId,
     selectedHeadKey,
     loadHeadRows,
+    loadGoodsRows,
     selectHead,
     saveHeadRecord,
     saveHead,
@@ -59,6 +86,26 @@
   const headSelectFields = headSections.flatMap((section) => section.fields).filter((item) => item.optionSource);
   const goodsSelectFields = goodsFormFields.filter((item) => item.optionSource);
   const imageExtensionSet = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']);
+  const visaCertificateColumns = [
+    { title: '序号', dataIndex: 'index', width: 70, align: 'center' },
+    { title: '证书代码', dataIndex: 'code', width: 120 },
+    { title: '证书名称', dataIndex: 'name', width: 320, ellipsis: true },
+    { title: '正本数量', dataIndex: 'count', width: 150 },
+    { title: '副本数量', dataIndex: 'subCount', width: 150 },
+  ];
+  const visaRowSelection = computed(() => ({
+    selectedRowKeys: visaSelectedCodes.value,
+    columnWidth: 44,
+    onChange: (keys: Array<string | number>) => {
+      visaSelectedCodes.value = keys.map((item) => String(item));
+    },
+  }));
+  const visaRules = {
+    domesticConsigneeEname: [{ max: 400, message: '境内收发货人名称(外文)最多400个字符', trigger: 'blur' }],
+    overseasConsignorCname: [{ max: 150, message: '境外收发货人名称(中文)最多150个字符', trigger: 'blur' }],
+    overseasConsignorAddr: [{ max: 100, message: '境外发货人地址最多100个字符', trigger: 'blur' }],
+    declGoodsEname: [{ max: 100, message: '商品英文名称最多100个字符', trigger: 'blur' }],
+  };
 
   function ensureSelectedOptions(record: CitRecord, fields: CitFieldConfig[]) {
     fields.forEach((item) => {
@@ -66,6 +113,144 @@
         ensureParaOption(item.optionSource, record[item.field]);
       }
     });
+  }
+
+  function normalizeText(value: unknown) {
+    return value === undefined || value === null ? '' : String(value).trim();
+  }
+
+  function recordValue(record: CitRecord | undefined, ...keys: string[]) {
+    if (!record) return undefined;
+    const normalizedMap = new Map(Object.keys(record).map((key) => [key.replace(/_/g, '').toLowerCase(), record[key]]));
+    for (const key of keys) {
+      const value = normalizedMap.get(key.replace(/_/g, '').toLowerCase());
+      if (value !== undefined && value !== null && value !== '') return value;
+    }
+    return undefined;
+  }
+
+  function optionText(label: unknown) {
+    const text = normalizeText(label);
+    return text.includes('|') ? text.split('|').slice(1).join('|') : text;
+  }
+
+  function formatDateValue(value: unknown) {
+    if (!value) return undefined;
+    if (value instanceof Date) {
+      const year = value.getFullYear();
+      const month = `${value.getMonth() + 1}`.padStart(2, '0');
+      const day = `${value.getDate()}`.padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    return normalizeText(value).slice(0, 10);
+  }
+
+  function buildVisaRows(existingRows: CitRecord[]) {
+    const existingByCode = new Map<string, CitRecord>();
+    existingRows.forEach((item) => {
+      const code = normalizeText(item.certCode);
+      if (code) {
+        existingByCode.set(code, item);
+      }
+    });
+    const rows = (optionMap.value.credential || []).map((option, index) => {
+      const sourceRecord = option.sourceRecord;
+      const code = normalizeText(recordValue(sourceRecord, 'code')) || normalizeText(option.value);
+      const existing = existingByCode.get(code);
+      return {
+        id: code,
+        code,
+        name: normalizeText(recordValue(sourceRecord, 'name')) || optionText(option.label),
+        count: normalizeText(existing?.certOriginalCount) || normalizeText(recordValue(sourceRecord, 'count')),
+        subCount: normalizeText(existing?.certCopyCount) || normalizeText(recordValue(sourceRecord, 'subCount', 'sub_count')),
+        visaId: existing?.id,
+        index: index + 1,
+      };
+    });
+    existingRows.forEach((item) => {
+      const code = normalizeText(item.certCode);
+      if (code && !rows.some((row) => row.code === code)) {
+        rows.push({
+          id: code,
+          code,
+          name: normalizeText(item.certName) || code,
+          count: normalizeText(item.certOriginalCount),
+          subCount: normalizeText(item.certCopyCount),
+          visaId: item.id,
+          index: rows.length + 1,
+        });
+      }
+    });
+    visaCertificateRows.value = rows;
+    visaSelectedCodes.value = existingRows.map((item) => normalizeText(item.certCode)).filter(Boolean);
+  }
+
+  async function openVisaElementsModal() {
+    if (!currentHeadId.value) {
+      createMessage.warning('请先保存表头，再维护检验检疫签证申报要素');
+      return;
+    }
+    if (!currentGoodsId.value) {
+      createMessage.warning('请先暂存并选择商品明细，再维护商品英文名称');
+      return;
+    }
+    visaVisible.value = true;
+    visaLoading.value = true;
+    try {
+      await loadParaOptions('credential');
+      const visaRows = await queryCitRecords('decCiqVisa', { decHeadId: currentHeadId.value, decListId: currentGoodsId.value });
+      const visaElement = visaRows[0] || {};
+      visaExistingIds.value = visaRows.map((item) => item.id).filter(Boolean) as Array<string | number>;
+      buildVisaRows(visaRows);
+      visaForm.value = {
+        domesticConsigneeEname: visaElement.domesticConsigneeEname,
+        overseasConsignorCname: visaElement.overseasConsignorCname,
+        overseasConsignorAddr: visaElement.overseasConsignorAddr,
+        cmplDschrgDt: formatDateValue(visaElement.cmplDschrgDt),
+        declGoodsEname: visaElement.declGoodsEname,
+      };
+      nextTick(() => visaFormRef.value?.clearValidate());
+    } finally {
+      visaLoading.value = false;
+    }
+  }
+
+  async function saveVisaRecords() {
+    const selectedCodeSet = new Set(visaSelectedCodes.value);
+    const selectedRows = visaCertificateRows.value.filter((row) => selectedCodeSet.has(row.code));
+    const elementPayload = {
+      decHeadId: currentHeadId.value,
+      decListId: currentGoodsId.value,
+      domesticConsigneeEname: normalizeText(visaForm.value.domesticConsigneeEname),
+      overseasConsignorCname: normalizeText(visaForm.value.overseasConsignorCname),
+      overseasConsignorAddr: normalizeText(visaForm.value.overseasConsignorAddr),
+      cmplDschrgDt: visaForm.value.cmplDschrgDt,
+      declGoodsEname: normalizeText(visaForm.value.declGoodsEname),
+    };
+    await Promise.all(visaExistingIds.value.map((id) => deleteCitEntity('decCiqVisa', id)));
+    const payloadRows = selectedRows.length
+      ? selectedRows.map((row) => ({
+          ...elementPayload,
+          certCode: row.code,
+          certName: row.name,
+          certOriginalCount: normalizeText(row.count),
+          certCopyCount: normalizeText(row.subCount),
+        }))
+      : [elementPayload];
+    await Promise.all(payloadRows.map((row) => saveCitEntity('decCiqVisa', row, false)));
+  }
+
+  async function handleSaveVisaElements() {
+    if (!currentHeadId.value || !currentGoodsId.value) return;
+    await visaFormRef.value?.validate();
+    visaSaving.value = true;
+    try {
+      await saveVisaRecords();
+      createMessage.success('检验检疫签证申报要素已保存');
+      visaVisible.value = false;
+    } finally {
+      visaSaving.value = false;
+    }
   }
 
   watch(headForm, (value) => ensureSelectedOptions(value, headSelectFields), { immediate: true, deep: true });
@@ -196,6 +381,10 @@
     createMessage.warning('请先保存新增报关单，再维护企业资质信息');
   }
 
+  function handleAddNewCiqVisa() {
+    createMessage.warning('请先保存新增报关单并选择商品明细，再维护检验检疫签证申报要素');
+  }
+
   async function handleSelectHead(record: DecHead) {
     await selectHead(record);
   }
@@ -228,6 +417,7 @@
           @mark-lob-upload="handleUploadMarkLob"
           @dec-user-add="handleAddDecUser"
           @dec-cop-limit-add="handleAddDecCopLimit"
+          @ciq-visa-add="openVisaElementsModal"
           @option-search="loadParaOptions"
         />
         <GoodsSection
@@ -244,6 +434,7 @@
           @create="handleCreateGoods"
           @select="selectGoods"
           @delete="deleteGoods"
+          @refresh="loadGoodsRows"
           @option-search="loadParaOptions"
         />
       </main>
@@ -301,8 +492,69 @@
         @mark-lob-upload="handleUploadNewMarkLob"
         @dec-user-add="handleAddNewDecUser"
         @dec-cop-limit-add="handleAddNewDecCopLimit"
+        @ciq-visa-add="handleAddNewCiqVisa"
         @option-search="loadParaOptions"
       />
+    </a-modal>
+
+    <a-modal
+      v-model:open="visaVisible"
+      title="检验检疫签证申报要素"
+      width="980px"
+      :confirmLoading="visaSaving"
+      :maskClosable="false"
+      @ok="handleSaveVisaElements"
+    >
+      <div class="visa-elements">
+        <a-table
+          size="small"
+          :columns="visaCertificateColumns"
+          :dataSource="visaCertificateRows"
+          :loading="visaLoading"
+          :pagination="false"
+          :rowKey="(record) => record.code"
+          :rowSelection="visaRowSelection"
+          :scroll="{ y: 320 }"
+        >
+          <template #bodyCell="{ column, record, index }">
+            <template v-if="column.dataIndex === 'index'">
+              {{ index + 1 }}
+            </template>
+            <template v-else-if="column.dataIndex === 'count'">
+              <a-input v-model:value="record.count" size="small" />
+            </template>
+            <template v-else-if="column.dataIndex === 'subCount'">
+              <a-input v-model:value="record.subCount" size="small" />
+            </template>
+          </template>
+        </a-table>
+        <a-form
+          ref="visaFormRef"
+          class="visa-elements__form"
+          :model="visaForm"
+          :rules="visaRules"
+          :label-col="{ style: { width: '200px' } }"
+        >
+          <a-form-item label="境内收发货人名称(外文)" name="domesticConsigneeEname">
+            <a-input v-model:value="visaForm.domesticConsigneeEname" size="small" maxlength="400" allowClear />
+          </a-form-item>
+          <a-form-item label="境外收发货人名称(中文)" name="overseasConsignorCname">
+            <a-input v-model:value="visaForm.overseasConsignorCname" size="small" maxlength="150" allowClear />
+          </a-form-item>
+          <a-form-item label="境外发货人地址" name="overseasConsignorAddr">
+            <a-input v-model:value="visaForm.overseasConsignorAddr" size="small" maxlength="100" allowClear />
+          </a-form-item>
+          <a-form-item label="卸毕日期" name="cmplDschrgDt">
+            <a-date-picker v-model:value="visaForm.cmplDschrgDt" valueFormat="YYYY-MM-DD" size="small" placeholder="请选择日期" />
+          </a-form-item>
+          <a-form-item label="商品英文名称" name="declGoodsEname">
+            <a-input v-model:value="visaForm.declGoodsEname" size="small" maxlength="100" allowClear />
+          </a-form-item>
+        </a-form>
+      </div>
+      <template #footer>
+        <a-button key="save" type="primary" :loading="visaSaving" @click="handleSaveVisaElements">保存</a-button>
+      </template>
     </a-modal>
   </div>
 </template>
@@ -315,6 +567,7 @@
 
     &__toolbar {
       display: flex;
+      gap: 8px;
       justify-content: flex-end;
       margin-bottom: 8px;
     }
@@ -386,6 +639,73 @@
 
     &__more {
       margin-top: 8px;
+    }
+  }
+
+  .visa-elements {
+    :deep(.ant-table-thead > tr > th) {
+      height: 28px;
+      padding: 4px 8px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      background: #5aa7df;
+      border-color: #d7e8f5;
+    }
+
+    :deep(.ant-table-tbody > tr:nth-child(even) > td) {
+      background: #eaf5ff;
+    }
+
+    :deep(.ant-table-tbody > tr > td) {
+      height: 28px;
+      padding: 3px 8px;
+      border-color: #e6edf3;
+    }
+
+    :deep(.ant-input),
+    :deep(.ant-picker) {
+      width: 100%;
+      height: 26px;
+      border-radius: 0;
+    }
+
+    &__form {
+      margin-top: 8px;
+      border: 1px solid #d9d9d9;
+
+      :deep(.ant-form-item) {
+        margin-bottom: 0;
+        border-bottom: 1px solid #d9d9d9;
+
+        &:last-child {
+          border-bottom: 0;
+        }
+      }
+
+      :deep(.ant-form-item-label) {
+        padding-right: 8px;
+        background: #fff;
+        border-right: 1px solid #d9d9d9;
+      }
+
+      :deep(.ant-form-item-label > label) {
+        height: 30px;
+        color: #111;
+        font-size: 13px;
+      }
+
+      :deep(.ant-form-item-control) {
+        background: #f2f2f2;
+      }
+
+      :deep(.ant-form-item-control-input) {
+        min-height: 30px;
+      }
+
+      :deep(.ant-form-item-control-input-content) {
+        padding: 2px 4px;
+      }
     }
   }
 
