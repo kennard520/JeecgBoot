@@ -1,7 +1,8 @@
 <script setup lang="ts">
-  import { computed, nextTick, ref } from 'vue';
+  import { computed, nextTick, ref, watch } from 'vue';
   import { SwapOutlined } from '@ant-design/icons-vue';
   import { Modal } from 'ant-design-vue';
+  import Big from 'big.js';
   import { deleteCitEntity, queryCitRecords, saveCitEntity } from '../cit.api';
   import { useMessage } from '/@/hooks/web/useMessage';
   import type { CitFieldConfig, CitRecord, CitSelectOption, CitTableColumn, DecList, ParaOptionLoadingMap, ParaOptionMap, ParaOptionSourceKey } from '../types';
@@ -113,7 +114,16 @@
   });
 
   function placeholder(item: CitFieldConfig) {
+    if (item.readonly) return '';
     return item.placeholder || (item.type === 'select' || item.type === 'date' ? `请选择${item.label}` : `请输入${item.label}`);
+  }
+
+  function itemDisabled(item: CitFieldConfig) {
+    return !props.hasHead || item.readonly;
+  }
+
+  function addItemDisabled(item: CitFieldConfig) {
+    return item.readonly;
   }
 
   function customRow(record: DecList) {
@@ -123,6 +133,7 @@
   }
 
   async function handleSave() {
+    syncDeclarationPrice(model.value);
     await formRef.value?.validate();
     emit('save');
   }
@@ -199,13 +210,36 @@
     if (sourceRecord.gName) {
       target.gName = sourceRecord.gName;
     }
-    if (sourceRecord.unit1 && !target.firstUnit) {
-      target.firstUnit = sourceRecord.unit1;
-    }
-    if (sourceRecord.unit2 && !target.secondUnit) {
-      target.secondUnit = sourceRecord.unit2;
+    target.firstUnit = sourceRecord.unit1 || undefined;
+    target.secondUnit = sourceRecord.unit2 || undefined;
+  }
+
+  function calculateDeclarationPrice(gQty: unknown, declTotal: unknown) {
+    const quantityText = normalizeText(gQty);
+    const totalText = normalizeText(declTotal);
+    if (!quantityText || !totalText) return undefined;
+    try {
+      const quantity = new Big(quantityText);
+      if (quantity.eq(0)) return undefined;
+      return new Big(totalText).div(quantity).toFixed(4);
+    } catch {
+      return undefined;
     }
   }
+
+  function syncDeclarationPrice(target: DecList) {
+    target.declPrice = calculateDeclarationPrice(target.gQty, target.declTotal);
+  }
+
+  watch(
+    () => [model.value.gQty, model.value.declTotal],
+    () => syncDeclarationPrice(model.value)
+  );
+
+  watch(
+    () => [addModel.value.gQty, addModel.value.declTotal],
+    () => syncDeclarationPrice(addModel.value)
+  );
 
   function normalizeText(value: unknown) {
     return value === undefined || value === null ? '' : String(value).trim();
@@ -356,6 +390,7 @@
   }
 
   async function handleCreate() {
+    syncDeclarationPrice(addModel.value);
     await addFormRef.value?.validate();
     emit('create', { ...addModel.value }, () => {
       addVisible.value = false;
@@ -381,7 +416,7 @@
       :loading="loading"
       :pagination="false"
       :customRow="customRow"
-      :scroll="{ x: 2100, y: 142 }"
+      :scroll="{ x: 2300, y: 142 }"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'action'">
@@ -398,14 +433,14 @@
     <a-form ref="formRef" class="goods-section__form" :model="model" :rules="rules" :label-col="{ style: { width: '120px' } }">
       <a-row :gutter="[8, 0]">
         <template v-for="item in fields" :key="item.field">
-          <a-col :xs="24" :md="12" :xl="item.span || 12">
+          <a-col :xs="24" :md="12" :xl="item.span || 8">
             <a-form-item :label="item.label" :name="item.field" :class="{ 'is-required-field': item.required }">
               <a-input-number
               size="small"
                 v-if="item.type === 'number'"
                 v-model:value="model[item.field]"
                 :placeholder="placeholder(item)"
-                :disabled="!hasHead"
+                :disabled="itemDisabled(item)"
                 :min="0"
               />
               <a-textarea
@@ -413,7 +448,7 @@
                 v-else-if="item.type === 'textarea'"
                 v-model:value="model[item.field]"
                 :placeholder="placeholder(item)"
-                :disabled="!hasHead"
+                :disabled="itemDisabled(item)"
                 :maxlength="item.maxLength"
                 :autoSize="{ minRows: 1, maxRows: 2 }"
               />
@@ -424,7 +459,7 @@
                 :options="selectOptions(item)"
                 :loading="selectLoading(item)"
                 :placeholder="placeholder(item)"
-                :disabled="!hasHead"
+                :disabled="itemDisabled(item)"
                 :mode="item.multiple ? 'multiple' : undefined"
                 :filterOption="filterSelectOption"
                 optionFilterProp="label"
@@ -440,32 +475,30 @@
                 valueFormat="YYYY-MM-DD"
                 size="small"
                 :placeholder="placeholder(item)"
-                :disabled="!hasHead"
+                :disabled="itemDisabled(item)"
               />
               <a-input
               size="small"
                 v-else
                 v-model:value="model[item.field]"
                 :placeholder="placeholder(item)"
-                :disabled="!hasHead"
+                :disabled="itemDisabled(item)"
                 :maxlength="item.maxLength"
                 allowClear
               />
             </a-form-item>
           </a-col>
-          <a-col v-if="item.field === 'originCountry'" :key="`${item.field}-preferential`" :xs="24" :md="12" :xl="12">
+          <a-col v-if="item.field === 'originCountry'" :key="`${item.field}-preferential`" :xs="24" :md="12" :xl="8">
             <a-form-item class="goods-section__preferential-action" label="协定享惠">
               <a-button
                 size="small"
                 type="primary"
-                ghost
                 :disabled="!hasHead || !model.id"
                 :loading="preferentialLoading"
                 @click="openPreferentialModal"
               >
                 协定享惠
               </a-button>
-              <span v-if="model.rcepOrigPlaceCode" class="goods-section__preferential-state">已维护</span>
             </a-form-item>
           </a-col>
         </template>
@@ -475,13 +508,14 @@
     <a-modal v-model:open="addVisible" title="新增商品明细" :confirmLoading="saving" width="760px" @ok="handleCreate">
       <a-form ref="addFormRef" class="goods-section__form goods-section__modal-form" :model="addModel" :rules="rules" :label-col="{ style: { width: '120px' } }">
         <a-row :gutter="[8, 0]">
-          <a-col v-for="item in fields" :key="item.field" :xs="24" :md="item.span === 24 ? 24 : 12">
+          <a-col v-for="item in fields" :key="item.field" :xs="24" :md="item.span === 24 ? 24 : 8">
             <a-form-item :label="item.label" :name="item.field" :class="{ 'is-required-field': item.required }">
               <a-input-number
                 v-if="item.type === 'number'"
                 v-model:value="addModel[item.field]"
                 size="small"
                 :placeholder="placeholder(item)"
+                :disabled="addItemDisabled(item)"
                 :min="0"
               />
               <a-textarea
@@ -489,6 +523,7 @@
                 v-model:value="addModel[item.field]"
                 size="small"
                 :placeholder="placeholder(item)"
+                :disabled="addItemDisabled(item)"
                 :maxlength="item.maxLength"
                 :autoSize="{ minRows: 1, maxRows: 2 }"
               />
@@ -499,6 +534,7 @@
                 :options="selectOptions(item)"
                 :loading="selectLoading(item)"
                 :placeholder="placeholder(item)"
+                :disabled="addItemDisabled(item)"
                 :mode="item.multiple ? 'multiple' : undefined"
                 :filterOption="filterSelectOption"
                 optionFilterProp="label"
@@ -514,12 +550,14 @@
                 valueFormat="YYYY-MM-DD"
                 size="small"
                 :placeholder="placeholder(item)"
+                :disabled="addItemDisabled(item)"
               />
               <a-input
                 v-else
                 v-model:value="addModel[item.field]"
                 size="small"
                 :placeholder="placeholder(item)"
+                :disabled="addItemDisabled(item)"
                 :maxlength="item.maxLength"
                 allowClear
               />

@@ -6,6 +6,7 @@ rebel.xml
 ## backend
 **/target
 **/logs
+jeecg-boot/jeecg-module-system/jeecg-system-start/.env*
 
 ## front
 **/*.lock

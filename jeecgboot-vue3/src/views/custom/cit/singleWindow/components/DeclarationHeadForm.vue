@@ -176,7 +176,7 @@
       </div>
       <a-row :gutter="[8, 0]">
         <template v-for="item in section.fields" :key="item.field">
-          <a-col :xs="24" :md="12" :xl="item.span || 12">
+          <a-col :xs="24" :md="12" :xl="item.span || 8">
             <a-form-item
               :label="item.label"
               :name="item.field"

@@ -133,6 +133,8 @@ export interface DecList extends CitRecord {
   decHeadId?: string | number;
   gNo?: number;
   codeTs?: string;
+  exgNo?: string;
+  exgVersion?: number;
   gName?: string;
   gModel?: string;
   goodsSpec?: string;

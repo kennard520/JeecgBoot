@@ -41,6 +41,7 @@
   const visaLoading = ref(false);
   const visaSaving = ref(false);
   const markLobUploading = ref(false);
+  const rightPanelCollapsed = ref(false);
   const headAddModel = ref<DecHead>(createEmptyHead());
   const visaForm = ref<VisaElementForm>({});
   const visaCertificateRows = ref<VisaCertificateRow[]>([]);
@@ -393,6 +394,13 @@
 <template>
   <div class="single-window-page">
     <div class="single-window-page__toolbar">
+      <a-button
+        size="small"
+        :preIcon="rightPanelCollapsed ? 'ant-design:menu-unfold-outlined' : 'ant-design:menu-fold-outlined'"
+        @click="rightPanelCollapsed = !rightPanelCollapsed"
+      >
+        {{ rightPanelCollapsed ? '展开右侧' : '收起右侧' }}
+      </a-button>
       <a-button type="primary" size="small" :loading="savingHead" @click="handleSaveHead">保存表头</a-button>
     </div>
 
@@ -403,7 +411,7 @@
       </span>
     </div>
 
-    <div class="single-window-page__declaration">
+    <div class="single-window-page__declaration" :class="{ 'is-right-collapsed': rightPanelCollapsed }">
       <main class="single-window-page__left">
         <DeclarationHeadForm
           ref="headFormRef"
@@ -440,6 +448,7 @@
       </main>
 
       <RelatedDataSidePanels
+        v-show="!rightPanelCollapsed"
         class="single-window-page__right"
         :headId="currentHeadId"
         :goodsId="currentGoodsId"
@@ -528,13 +537,7 @@
             </template>
           </template>
         </a-table>
-        <a-form
-          ref="visaFormRef"
-          class="visa-elements__form"
-          :model="visaForm"
-          :rules="visaRules"
-          :label-col="{ style: { width: '200px' } }"
-        >
+        <a-form ref="visaFormRef" class="visa-elements__form" :model="visaForm" :rules="visaRules" :label-col="{ style: { width: '200px' } }">
           <a-form-item label="境内收发货人名称(外文)" name="domesticConsigneeEname">
             <a-input v-model:value="visaForm.domesticConsigneeEname" size="small" maxlength="400" allowClear />
           </a-form-item>
@@ -624,6 +627,10 @@
       grid-template-columns: minmax(0, 1fr) 340px;
       gap: 8px;
       align-items: start;
+
+      &.is-right-collapsed {
+        grid-template-columns: minmax(0, 1fr);
+      }
     }
 
     &__left {
