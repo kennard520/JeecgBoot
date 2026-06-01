@@ -1,7 +1,9 @@
 export type CitEntityKey =
   | 'citAttributes'
   | 'decHead'
+  | 'decFactor'
   | 'decList'
+  | 'decGoodsFactor'
   | 'decCiqVisa'
   | 'decContainer'
   | 'decLicenseDocus'
@@ -148,6 +150,40 @@ export interface DecList extends CitRecord {
   declPrice?: string | number;
   declTotal?: string | number;
   tradeCurr?: string;
+}
+
+export interface DecFactor extends CitRecord {
+  id?: string;
+  requireCheck?: string;
+  decFacCode?: string;
+  codeTs?: string;
+  decFacName?: string;
+  gName?: string;
+  decFacType?: string;
+  ieFlag?: string;
+  textName?: string;
+  sNum?: string;
+  extendFiled?: string;
+  decFacContent?: string;
+  fullCodeTs?: string;
+}
+
+export interface DecGoodsFactor extends CitRecord {
+  id?: string | number;
+  decHeadId?: string | number;
+  decListId?: string | number;
+  codeTs?: string;
+  fullCodeTs?: string;
+  decFactorId?: string;
+  textName?: string;
+  factorValue?: string;
+  factorValueText?: string;
+  requireCheck?: string;
+  decFacCode?: string;
+  decFacName?: string;
+  decFacType?: string;
+  sNum?: string;
+  extendFiled?: string;
 }
 
 export interface RelatedTabConfig {

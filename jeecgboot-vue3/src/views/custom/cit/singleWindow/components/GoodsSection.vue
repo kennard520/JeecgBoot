@@ -3,9 +3,20 @@
   import { SwapOutlined } from '@ant-design/icons-vue';
   import { Modal } from 'ant-design-vue';
   import Big from 'big.js';
-  import { deleteCitEntity, queryCitRecords, saveCitEntity } from '../cit.api';
+  import { deleteCitEntity, queryCitRecords, queryDecFactorsByFullCodeTs, saveCitEntity, saveDecGoodsFactors } from '../cit.api';
   import { useMessage } from '/@/hooks/web/useMessage';
-  import type { CitFieldConfig, CitRecord, CitSelectOption, CitTableColumn, DecList, ParaOptionLoadingMap, ParaOptionMap, ParaOptionSourceKey } from '../types';
+  import type {
+    CitFieldConfig,
+    CitRecord,
+    CitSelectOption,
+    CitTableColumn,
+    DecFactor,
+    DecGoodsFactor,
+    DecList,
+    ParaOptionLoadingMap,
+    ParaOptionMap,
+    ParaOptionSourceKey,
+  } from '../types';
 
   const props = defineProps<{
     rows: DecList[];
@@ -41,12 +52,20 @@
   const formRef = ref<any>();
   const addFormRef = ref<any>();
   const preferentialFormRef = ref<any>();
+  const factorFormRef = ref<any>();
   const addVisible = ref(false);
   const preferentialVisible = ref(false);
+  const factorVisible = ref(false);
   const preferentialLoading = ref(false);
   const preferentialSaving = ref(false);
+  const factorLoading = ref(false);
+  const factorSaving = ref(false);
   const addModel = ref<DecList>({});
   const preferentialForm = ref<PreferentialForm>({});
+  const factorGoods = ref<DecList>();
+  const factorFullCodeTs = ref('');
+  const factorDefinitions = ref<DecFactor[]>([]);
+  const factorValues = ref<Record<string, string>>({});
   const preferentialOriginField: CitFieldConfig = {
     field: 'rcepOrigPlaceCode',
     label: '优惠贸易协定项下原产地',
@@ -109,6 +128,15 @@
         });
       }
       if (itemRules.length) result[item.field] = itemRules;
+    });
+    return result;
+  });
+  const factorRules = computed(() => {
+    const result: Record<string, any[]> = {};
+    factorDefinitions.value.forEach((item) => {
+      if (isRequiredFactor(item)) {
+        result[factorKey(item)] = [{ required: true, message: `请输入${factorLabel(item)}`, trigger: 'change' }];
+      }
     });
     return result;
   });
@@ -243,6 +271,121 @@
 
   function normalizeText(value: unknown) {
     return value === undefined || value === null ? '' : String(value).trim();
+  }
+
+  function splitPipeValue(value: unknown) {
+    const text = normalizeText(value);
+    return text ? text.split('|').map((item) => item.trim()) : [];
+  }
+
+  function factorKey(item: DecFactor | DecGoodsFactor) {
+    return normalizeText(item.id || item.decFactorId) || `${normalizeText(item.textName)}-${normalizeText(item.sNum)}`;
+  }
+
+  function factorLabel(item: DecFactor) {
+    return normalizeText(item.textName) || normalizeText(item.decFacName) || '申报要素';
+  }
+
+  function isRequiredFactor(item: DecFactor) {
+    const text = normalizeText(item.requireCheck).toUpperCase();
+    return Boolean(text && !['0', 'N', 'NO', 'FALSE', '否', '非必填', '不需要'].includes(text));
+  }
+
+  function factorOptions(item: DecFactor) {
+    const values = splitPipeValue(item.decFacCode);
+    const labels = splitPipeValue(item.decFacContent);
+    return values.map((value, index) => ({
+      value,
+      label: labels[index] || value,
+    }));
+  }
+
+  function isRadioFactor(item: DecFactor) {
+    return factorOptions(item).length > 0;
+  }
+
+  function factorValueText(item: DecFactor, value: string) {
+    if (!isRadioFactor(item)) return value;
+    const option = factorOptions(item).find((optionItem) => optionItem.value === value);
+    return option?.label || value;
+  }
+
+  function ensureSavedGoodsForFactor(record: DecList) {
+    if (!record?.id || !record.decHeadId) {
+      createMessage.warning('请先暂存并选择商品明细，再维护商品申报要素');
+      return false;
+    }
+    if (!normalizeText(record.codeTs)) {
+      createMessage.warning('请先选择商品编号');
+      return false;
+    }
+    return true;
+  }
+
+  async function openFactorModal(record: DecList = model.value) {
+    if (!ensureSavedGoodsForFactor(record)) return;
+    factorGoods.value = record;
+    factorFullCodeTs.value = normalizeText(record.codeTs);
+    factorVisible.value = true;
+    factorLoading.value = true;
+    factorDefinitions.value = [];
+    factorValues.value = {};
+    try {
+      const [definitions, savedRows] = await Promise.all([
+        queryDecFactorsByFullCodeTs(factorFullCodeTs.value),
+        queryCitRecords<DecGoodsFactor>('decGoodsFactor', { decListId: record.id, pageSize: 500 }),
+      ]);
+      factorDefinitions.value = definitions || [];
+      const savedByFactorId = new Map(savedRows.filter((item) => normalizeText(item.decFactorId)).map((item) => [normalizeText(item.decFactorId), item]));
+      const savedByTextName = new Map(savedRows.filter((item) => normalizeText(item.textName)).map((item) => [normalizeText(item.textName), item]));
+      const nextValues: Record<string, string> = {};
+      factorDefinitions.value.forEach((item) => {
+        const saved = savedByFactorId.get(normalizeText(item.id)) || savedByTextName.get(normalizeText(item.textName));
+        nextValues[factorKey(item)] = normalizeText(saved?.factorValue);
+      });
+      factorValues.value = nextValues;
+      if (!factorDefinitions.value.length) {
+        createMessage.warning('当前商品编号未配置申报要素');
+      }
+      nextTick(() => factorFormRef.value?.clearValidate());
+    } finally {
+      factorLoading.value = false;
+    }
+  }
+
+  async function handleFactorConfirm() {
+    if (!factorGoods.value?.id) return;
+    await factorFormRef.value?.validate();
+    factorSaving.value = true;
+    try {
+      const rows = factorDefinitions.value
+        .map((item) => {
+          const value = normalizeText(factorValues.value[factorKey(item)]);
+          if (!value) return undefined;
+          return {
+            decHeadId: factorGoods.value?.decHeadId,
+            decListId: factorGoods.value?.id,
+            codeTs: factorGoods.value?.codeTs,
+            fullCodeTs: factorFullCodeTs.value,
+            decFactorId: item.id,
+            textName: factorLabel(item),
+            factorValue: value,
+            factorValueText: factorValueText(item, value),
+            requireCheck: item.requireCheck,
+            decFacCode: item.decFacCode,
+            decFacName: item.decFacName,
+            decFacType: item.decFacType,
+            sNum: item.sNum,
+            extendFiled: item.extendFiled,
+          } as DecGoodsFactor;
+        })
+        .filter(Boolean) as DecGoodsFactor[];
+      await saveDecGoodsFactors(factorGoods.value.id, rows);
+      createMessage.success('商品申报要素已保存');
+      factorVisible.value = false;
+    } finally {
+      factorSaving.value = false;
+    }
   }
 
   function stripAgreementPrefix(value: unknown) {
@@ -425,6 +568,11 @@
             <a-button type="link" size="small" danger @click.stop="emit('delete', record)">删除</a-button>
           </a-space>
         </template>
+        <template v-else-if="column.dataIndex === 'gModel'">
+          <span class="goods-section__factor-trigger" @dblclick.stop="openFactorModal(record)">
+            {{ formatCellText(column.dataIndex, record[column.dataIndex]) }}
+          </span>
+        </template>
         <template v-else>
           {{ formatCellText(column.dataIndex, record[column.dataIndex]) }}
         </template>
@@ -451,6 +599,7 @@
                 :disabled="itemDisabled(item)"
                 :maxlength="item.maxLength"
                 :autoSize="{ minRows: 1, maxRows: 2 }"
+                @dblclick="item.field === 'gModel' && openFactorModal(model)"
               />
               <a-select
               size="small"
@@ -565,6 +714,48 @@
           </a-col>
         </a-row>
       </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="factorVisible"
+      title="商品申报要素"
+      width="780px"
+      :confirmLoading="factorSaving"
+      :maskClosable="false"
+      @ok="handleFactorConfirm"
+    >
+      <a-spin :spinning="factorLoading">
+        <div class="goods-factor">
+          <div class="goods-factor__meta">
+            <span>商品编号：{{ factorFullCodeTs }}</span>
+            <span v-if="factorGoods?.gName">商品名称：{{ factorGoods.gName }}</span>
+          </div>
+          <a-empty v-if="!factorDefinitions.length && !factorLoading" description="当前商品编号未配置申报要素" />
+          <a-form
+            v-else
+            ref="factorFormRef"
+            class="goods-factor__form"
+            :model="factorValues"
+            :rules="factorRules"
+            :label-col="{ style: { width: '180px' } }"
+          >
+            <a-form-item
+              v-for="item in factorDefinitions"
+              :key="factorKey(item)"
+              :label="factorLabel(item)"
+              :name="factorKey(item)"
+              :class="{ 'is-required-field': isRequiredFactor(item) }"
+            >
+              <a-radio-group v-if="isRadioFactor(item)" v-model:value="factorValues[factorKey(item)]">
+                <a-radio v-for="option in factorOptions(item)" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </a-radio>
+              </a-radio-group>
+              <a-input v-else v-model:value="factorValues[factorKey(item)]" size="small" allowClear />
+            </a-form-item>
+          </a-form>
+        </div>
+      </a-spin>
     </a-modal>
 
     <a-modal
@@ -829,6 +1020,61 @@
     &__preferential-state {
       color: #1677ff;
       font-size: 12px;
+    }
+
+    &__factor-trigger {
+      display: block;
+      min-height: 18px;
+      cursor: pointer;
+    }
+  }
+
+  .goods-factor {
+    padding: 8px 0 0;
+
+    &__meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin-bottom: 12px;
+      color: #4b5563;
+      font-size: 13px;
+    }
+
+    &__form {
+      max-height: 520px;
+      overflow-y: auto;
+      padding-right: 6px;
+
+      :deep(.ant-form-item) {
+        margin-bottom: 10px;
+      }
+
+      :deep(.ant-form-item-label) {
+        padding-right: 8px;
+        line-height: 28px;
+      }
+
+      :deep(.ant-form-item-label > label) {
+        height: 28px;
+        color: #606266;
+        font-size: 12px;
+      }
+
+      :deep(.ant-input) {
+        height: 28px;
+        font-size: 13px;
+        border-radius: 4px;
+      }
+
+      :deep(.ant-radio-wrapper) {
+        margin-bottom: 4px;
+        font-size: 13px;
+      }
+
+      :deep(.is-required-field .ant-input:not([disabled])) {
+        background-color: #fffbe6;
+      }
     }
   }
 

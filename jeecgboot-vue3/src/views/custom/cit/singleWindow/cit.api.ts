@@ -1,13 +1,15 @@
 import { Modal } from 'ant-design-vue';
 import { defHttp } from '/@/utils/http/axios';
-import type { CitEntityKey, CitPage, CitRecord } from './types';
+import type { CitEntityKey, CitPage, CitRecord, DecFactor, DecGoodsFactor } from './types';
 
 const CIT_BASE_URL = '/custom/cit';
 
 export const citApiPathMap: Record<CitEntityKey, string> = {
   citAttributes: `${CIT_BASE_URL}/citAttributes`,
   decHead: `${CIT_BASE_URL}/decHead`,
+  decFactor: `${CIT_BASE_URL}/decFactor`,
   decList: `${CIT_BASE_URL}/decList`,
+  decGoodsFactor: `${CIT_BASE_URL}/decGoodsFactor`,
   decCiqVisa: `${CIT_BASE_URL}/decCiqVisa`,
   decContainer: `${CIT_BASE_URL}/decContainer`,
   decLicenseDocus: `${CIT_BASE_URL}/decLicenseDocus`,
@@ -86,6 +88,14 @@ export function queryCitById<T extends CitRecord = CitRecord>(entityKey: CitEnti
 export function saveCitEntity<T extends CitRecord = CitRecord>(entityKey: CitEntityKey, params: T, isUpdate: boolean) {
   const url = `${citApiPathMap[entityKey]}/${isUpdate ? 'edit' : 'add'}`;
   return isUpdate ? defHttp.put({ url, params }) : defHttp.post({ url, params });
+}
+
+export function queryDecFactorsByFullCodeTs(fullCodeTs: string) {
+  return defHttp.get<DecFactor[]>({ url: `${citApiPathMap.decFactor}/byFullCodeTs`, params: { fullCodeTs } });
+}
+
+export function saveDecGoodsFactors(decListId: string | number, factors: DecGoodsFactor[]) {
+  return defHttp.post({ url: `${citApiPathMap.decGoodsFactor}/saveByGoods`, params: { decListId, factors } });
 }
 
 export function deleteCitEntity(entityKey: CitEntityKey, id: string | number, handleSuccess?: () => void) {
