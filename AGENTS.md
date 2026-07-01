@@ -79,6 +79,7 @@ Important backend modules:
   - CIT business code generated from `jeecg-boot/db/其他数据库脚本/达梦/CIT.sql` lives under `org.jeecg.modules.custom.cit`.
   - CIT packages follow `controller`, `entity`, `mapper`, `mapper/xml`, `service`, `service/impl`; generated entity comments preserve SQL table/column comments.
   - REST paths use `/custom/cit/<lowerCamelTableName>`, for example `/custom/cit/decHead/list`.
+  - External Customs-AI customer APIs belong in this module as the Java facade. Customers authenticate, upload files, create tasks, poll results, and receive callbacks through JeecgBoot; the separate `customs-ai` Python service is only the internal parsing engine. Task creation publishes a RabbitMQ parse request with routing key `companyCode`; `customs-ai` workers consume `customs.parse.request.<companyCode>` and publish parse results back to `customs.parse.result.java`, where JeecgBoot imports CIT rows and pushes callbacks. Detailed design: `jeecg-boot/jeecg-boot-module/jeecg-module-custom/docs/customs-ai-facade-api-design.md`.
 
 - `jeecg-boot-module/jeecg-boot-module-airag`
   - AI/RAG feature module under `org.jeecg.modules.airag`.
