@@ -4,6 +4,8 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -40,8 +42,13 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import javax.sql.DataSource;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
@@ -50,12 +57,14 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @Slf4j
 public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, CustomApiTask> implements ICustomApiTaskService {
     private static final int ERROR_CODE_MAX_LENGTH = 100;
     private static final int ERROR_MESSAGE_MAX_LENGTH = 1000;
+    private final Map<Class<?>, Map<String, Integer>> columnSizeCache = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper = JsonMapper.builder()
             .addModule(customApiImportModule())
@@ -74,6 +83,8 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
     private IDecHeadService decHeadService;
     @Autowired
     private IDecListService decListService;
+    @Autowired
+    private DataSource dataSource;
 
     public CustomApiTaskServiceImpl() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -229,6 +240,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         }
         DecHead head = mapper.convertValue(headObj, DecHead.class);
         head.setId(null);
+        trimStringColumns(head);
         decHeadService.save(head);
 
         Object listObj = json.get("DecList");
@@ -238,6 +250,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 DecList decList = mapper.convertValue(item, DecList.class);
                 decList.setId(null);
                 decList.setDecHeadId(head.getId());
+                trimStringColumns(decList);
                 goods.add(decList);
             }
             if (!goods.isEmpty()) {
@@ -377,6 +390,63 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    private void trimStringColumns(Object entity) {
+        if (entity == null) {
+            return;
+        }
+        Map<String, Integer> columnSizes = columnSizeCache.computeIfAbsent(entity.getClass(), this::loadColumnSizes);
+        for (Field field : entity.getClass().getDeclaredFields()) {
+            if (!String.class.equals(field.getType())) {
+                continue;
+            }
+            TableField tableField = field.getAnnotation(TableField.class);
+            if (tableField == null || tableField.value().isBlank()) {
+                continue;
+            }
+            Integer maxLength = columnSizes.get(tableField.value().toUpperCase());
+            if (maxLength == null || maxLength <= 0) {
+                continue;
+            }
+            try {
+                field.setAccessible(true);
+                String value = (String) field.get(entity);
+                if (value != null && value.length() > maxLength) {
+                    log.warn("Custom API import value truncated, entity={}, field={}, column={}, length={} > {}",
+                            entity.getClass().getSimpleName(), field.getName(), tableField.value(), value.length(), maxLength);
+                    field.set(entity, value.substring(0, maxLength));
+                }
+            } catch (IllegalAccessException e) {
+                throw new JeecgBootException("trim import field failed: " + field.getName());
+            }
+        }
+    }
+
+    private Map<String, Integer> loadColumnSizes(Class<?> entityClass) {
+        TableName tableName = entityClass.getAnnotation(TableName.class);
+        if (tableName == null || tableName.value().isBlank()) {
+            return Map.of();
+        }
+        Map<String, Integer> sizes = new ConcurrentHashMap<>();
+        try (Connection connection = dataSource.getConnection()) {
+            DatabaseMetaData metaData = connection.getMetaData();
+            loadColumnSizes(metaData, tableName.value().toUpperCase(), sizes);
+            if (sizes.isEmpty()) {
+                loadColumnSizes(metaData, tableName.value(), sizes);
+            }
+        } catch (Exception e) {
+            log.warn("Custom API load column sizes failed, table={}", tableName.value(), e);
+        }
+        return sizes;
+    }
+
+    private void loadColumnSizes(DatabaseMetaData metaData, String tableName, Map<String, Integer> sizes) throws Exception {
+        try (ResultSet columns = metaData.getColumns(null, null, tableName, "%")) {
+            while (columns.next()) {
+                sizes.put(columns.getString("COLUMN_NAME").toUpperCase(), columns.getInt("COLUMN_SIZE"));
+            }
+        }
     }
 
     private static SimpleModule customApiImportModule() {
