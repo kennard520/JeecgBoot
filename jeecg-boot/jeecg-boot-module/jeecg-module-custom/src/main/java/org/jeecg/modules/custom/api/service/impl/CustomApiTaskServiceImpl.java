@@ -4,9 +4,13 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
@@ -34,9 +38,13 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +52,7 @@ import java.util.Map;
 @Service
 public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, CustomApiTask> implements ICustomApiTaskService {
     private final ObjectMapper mapper = JsonMapper.builder()
+            .addModule(customApiImportModule())
             .configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true)
             .build();
     private final RestTemplate callbackRestTemplate;
@@ -353,5 +362,36 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private static SimpleModule customApiImportModule() {
+        SimpleModule module = new SimpleModule();
+        module.addDeserializer(Date.class, new CustomApiDateDeserializer());
+        return module;
+    }
+
+    private static class CustomApiDateDeserializer extends JsonDeserializer<Date> {
+        private static final List<String> PATTERNS = List.of("yyyy-MM-dd", "yyyyMMdd", "yyyy/MM/dd");
+
+        @Override
+        public Date deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+            String value = parser.getValueAsString();
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            for (String pattern : PATTERNS) {
+                SimpleDateFormat format = new SimpleDateFormat(pattern);
+                format.setLenient(false);
+                try {
+                    return format.parse(value);
+                } catch (ParseException ignored) {
+                }
+            }
+            return (Date) context.handleWeirdStringValue(
+                    Date.class,
+                    value,
+                    "expected date format yyyy-MM-dd, yyyyMMdd or yyyy/MM/dd"
+            );
+        }
     }
 }
