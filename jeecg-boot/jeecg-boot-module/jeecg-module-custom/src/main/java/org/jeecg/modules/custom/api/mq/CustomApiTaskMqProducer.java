@@ -7,10 +7,15 @@ import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.storage.ObjectStorageService;
 import org.jeecg.modules.custom.api.vo.FileDownloadInfo;
+import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
 import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -27,6 +32,9 @@ public class CustomApiTaskMqProducer {
     private RabbitTemplate rabbitTemplate;
 
     @Autowired
+    private AmqpAdmin amqpAdmin;
+
+    @Autowired
     private ObjectStorageService objectStorageService;
 
     public void sendParseTask(CustomApiTask task, CustomApiFile file) {
@@ -35,6 +43,7 @@ public class CustomApiTaskMqProducer {
             throw new JeecgBootException("companyCode is required for MQ routing");
         }
         try {
+            ensureRequestQueue(routingKey);
             FileDownloadInfo download = objectStorageService.createDownloadUrl(file, LocalDateTime.now().plusHours(2));
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("taskId", task.getTaskId());
@@ -62,5 +71,13 @@ public class CustomApiTaskMqProducer {
         } catch (Exception e) {
             throw new JeecgBootException("send parse task MQ failed: " + e.getMessage());
         }
+    }
+
+    private void ensureRequestQueue(String routingKey) {
+        DirectExchange exchange = new DirectExchange(CustomApiMqConstant.PARSE_REQUEST_EXCHANGE, true, false);
+        Queue queue = QueueBuilder.durable(CustomApiMqConstant.PARSE_REQUEST_QUEUE_PREFIX + routingKey).build();
+        amqpAdmin.declareExchange(exchange);
+        amqpAdmin.declareQueue(queue);
+        amqpAdmin.declareBinding(BindingBuilder.bind(queue).to(exchange).with(routingKey));
     }
 }

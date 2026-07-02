@@ -3,5 +3,28 @@ spring:
     name: jeecg-system
   config:
     import: optional:classpath:config/application-liteflow.yml
+  rabbitmq:
+    host: ${CUSTOM_API_MQ_HOST:127.0.0.1}
+    port: ${CUSTOM_API_MQ_PORT:5672}
+    username: ${CUSTOM_API_MQ_USERNAME:customs_ai}
+    password: ${CUSTOM_API_MQ_PASSWORD:r5SPIqj6ikbhUoEDj4noSK1g}
+    virtual-host: ${CUSTOM_API_MQ_VHOST:/}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: manual
+        prefetch: ${CUSTOM_API_MQ_PREFETCH:1}
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 5000
   profiles:
     active: '@profile.name@'
+
+custom:
+  api:
+    internal-base-url: ${CUSTOM_API_INTERNAL_BASE_URL:http://124.223.39.167:8080/jeecg-boot}
+    internal-token: ${CUSTOM_API_INTERNAL_TOKEN:}
