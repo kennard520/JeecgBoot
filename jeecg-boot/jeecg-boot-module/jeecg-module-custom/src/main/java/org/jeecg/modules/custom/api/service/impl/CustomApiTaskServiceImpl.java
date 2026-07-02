@@ -507,6 +507,9 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         if (isBlank(decList.getDestinationCountry())) {
             decList.setDestinationCountry("142");
         }
+        if (isBlank(decList.getDistrictCode())) {
+            decList.setDistrictCode("00000");
+        }
     }
 
     private String firstNonBlank(String... values) {
