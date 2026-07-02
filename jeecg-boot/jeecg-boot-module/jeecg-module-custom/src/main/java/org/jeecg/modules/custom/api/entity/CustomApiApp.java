@@ -61,7 +61,7 @@ public class CustomApiApp implements Serializable {
     @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime updatedAt;
 
-    public boolean isEnabled() {
+    public boolean isApiEnabled() {
         return enabled != null && enabled == 1;
     }
 }

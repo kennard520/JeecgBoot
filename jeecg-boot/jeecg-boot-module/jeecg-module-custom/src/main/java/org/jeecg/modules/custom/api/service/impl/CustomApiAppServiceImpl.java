@@ -29,7 +29,7 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
             throw new JeecgBootException("appKey and appSecret are required");
         }
         CustomApiApp app = getOne(new LambdaQueryWrapper<CustomApiApp>().eq(CustomApiApp::getAppKey, request.getAppKey()), false);
-        if (app == null || !app.isEnabled()) {
+        if (app == null || !app.isApiEnabled()) {
             throw new JeecgBootException("app is disabled or not found");
         }
         if (!CustomApiCrypto.equalsHash(request.getAppSecret(), app.getAppSecretHash())) {
@@ -57,7 +57,7 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
         String token = auth.substring("Bearer ".length()).trim();
         CustomApiApp app = getOne(new LambdaQueryWrapper<CustomApiApp>()
                 .eq(CustomApiApp::getAccessTokenHash, CustomApiCrypto.sha256(token)), false);
-        if (app == null || !app.isEnabled()) {
+        if (app == null || !app.isApiEnabled()) {
             throw new JeecgBootException("invalid access token");
         }
         if (app.getTokenExpireAt() == null || app.getTokenExpireAt().isBefore(LocalDateTime.now())) {
