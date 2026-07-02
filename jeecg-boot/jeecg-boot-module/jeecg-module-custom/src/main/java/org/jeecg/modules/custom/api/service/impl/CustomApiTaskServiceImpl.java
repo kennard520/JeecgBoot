@@ -45,6 +45,7 @@ import org.springframework.web.client.RestTemplate;
 import javax.sql.DataSource;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -240,6 +241,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         }
         DecHead head = mapper.convertValue(headObj, DecHead.class);
         head.setId(null);
+        fillRequiredHeadDefaults(head);
         trimStringColumns(head);
         decHeadService.save(head);
 
@@ -250,6 +252,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 DecList decList = mapper.convertValue(item, DecList.class);
                 decList.setId(null);
                 decList.setDecHeadId(head.getId());
+                fillRequiredListDefaults(decList);
                 trimStringColumns(decList);
                 goods.add(decList);
             }
@@ -390,6 +393,129 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    private void fillRequiredHeadDefaults(DecHead head) {
+        if (head == null) {
+            return;
+        }
+        String companyCode = firstNonBlank(head.getTradeCode(), head.getOwnerCode(), head.getAgentCode(), head.getCopCode(), "0000000000");
+        String companyName = firstNonBlank(head.getTradeName(), head.getOwnerName(), head.getAgentName(), head.getCopName(), "未知企业");
+        String companyScc = firstNonBlank(head.getTradeCoScc(), head.getOwnerCodeScc(), head.getAgentCodeScc(), "000000000000000000");
+        if (isBlank(head.getAgentCode())) {
+            head.setAgentCode(companyCode);
+        }
+        if (isBlank(head.getAgentName())) {
+            head.setAgentName(companyName);
+        }
+        if (isBlank(head.getCopCode())) {
+            head.setCopCode(companyCode);
+        }
+        if (isBlank(head.getCopName())) {
+            head.setCopName(companyName);
+        }
+        if (isBlank(head.getOwnerName())) {
+            head.setOwnerName(companyName);
+        }
+        if (isBlank(head.getTradeCode())) {
+            head.setTradeCode(companyCode);
+        }
+        if (isBlank(head.getTradeName())) {
+            head.setTradeName(companyName);
+        }
+        if (isBlank(head.getTradeCoScc())) {
+            head.setTradeCoScc(companyScc);
+        }
+        if (isBlank(head.getAgentCodeScc())) {
+            head.setAgentCodeScc(companyScc);
+        }
+        if (isBlank(head.getOwnerCodeScc())) {
+            head.setOwnerCodeScc(companyScc);
+        }
+        if (isBlank(head.getDeclTrnRel())) {
+            head.setDeclTrnRel("0");
+        }
+        if (isBlank(head.getEdiId())) {
+            head.setEdiId("1");
+        }
+        if (isBlank(head.getEntryType())) {
+            head.setEntryType("0");
+        }
+        if (isBlank(head.getInputerName())) {
+            head.setInputerName("custom-api");
+        }
+        if (isBlank(head.getType())) {
+            head.setType(firstNonBlank(head.getIeFlag(), "I"));
+        }
+        if (isBlank(head.getTypistNo())) {
+            head.setTypistNo("custom-api");
+        }
+        if (isBlank(head.getPromiseItmes())) {
+            head.setPromiseItmes("00000");
+        }
+        if (isBlank(head.getGoodsPlace())) {
+            head.setGoodsPlace("");
+        }
+        if (isBlank(head.getDeclareName())) {
+            head.setDeclareName("custom-api");
+        }
+    }
+
+    private void fillRequiredListDefaults(DecList decList) {
+        if (decList == null) {
+            return;
+        }
+        if (decList.getGNo() == null) {
+            decList.setGNo(1);
+        }
+        if (isBlank(decList.getCodeTs())) {
+            decList.setCodeTs("0000000000");
+        }
+        if (isBlank(decList.getDutyMode())) {
+            decList.setDutyMode("1");
+        }
+        if (decList.getDeclPrice() == null) {
+            decList.setDeclPrice(BigDecimal.ZERO);
+        }
+        if (decList.getDeclTotal() == null) {
+            decList.setDeclTotal(BigDecimal.ZERO);
+        }
+        if (isBlank(decList.getGUnit())) {
+            decList.setGUnit(firstNonBlank(decList.getFirstUnit(), "035"));
+        }
+        if (isBlank(decList.getFirstUnit())) {
+            decList.setFirstUnit(firstNonBlank(decList.getGUnit(), "035"));
+        }
+        if (decList.getGQty() == null) {
+            decList.setGQty(BigDecimal.ZERO);
+        }
+        if (decList.getFirstQty() == null) {
+            decList.setFirstQty(decList.getGQty());
+        }
+        if (decList.getSecondQty() == null) {
+            decList.setSecondQty(BigDecimal.ZERO);
+        }
+        if (isBlank(decList.getGName())) {
+            decList.setGName("");
+        }
+        if (isBlank(decList.getOriginCountry())) {
+            decList.setOriginCountry("000");
+        }
+        if (isBlank(decList.getTradeCurr())) {
+            decList.setTradeCurr("502");
+        }
+        if (isBlank(decList.getDestinationCountry())) {
+            decList.setDestinationCountry("142");
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (!isBlank(value)) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private void trimStringColumns(Object entity) {
