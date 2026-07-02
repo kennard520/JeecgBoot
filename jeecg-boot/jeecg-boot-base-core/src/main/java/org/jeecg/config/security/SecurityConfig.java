@@ -131,6 +131,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests((authorize) -> authorize
                         .requestMatchers(InMemoryIgnoreAuth.get().stream().map(AntPathRequestMatcher::antMatcher).toList().toArray(new AntPathRequestMatcher[0])).permitAll()
                         .requestMatchers(AntPathRequestMatcher.antMatcher("/sys/cas/client/validateLogin")).permitAll()
+                        .requestMatchers(AntPathRequestMatcher.antMatcher("/custom/api/**")).permitAll()
                         .requestMatchers(AntPathRequestMatcher.antMatcher("/sys/randomImage/**")).permitAll()
                         .requestMatchers(AntPathRequestMatcher.antMatcher("/sys/checkCaptcha")).permitAll()
                         .requestMatchers(AntPathRequestMatcher.antMatcher("/sys/login")).permitAll()
