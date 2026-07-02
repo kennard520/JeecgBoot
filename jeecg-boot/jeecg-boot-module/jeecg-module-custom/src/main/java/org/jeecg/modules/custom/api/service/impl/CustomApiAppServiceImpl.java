@@ -50,11 +50,16 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
 
     @Override
     public CustomApiApp requireApp(HttpServletRequest request) {
-        String auth = request.getHeader("Authorization");
-        if (isBlank(auth) || !auth.startsWith("Bearer ")) {
-            throw new JeecgBootException("missing Authorization Bearer token");
+        String token = request.getHeader("X-Custom-Api-Token");
+        if (isBlank(token)) {
+            String auth = request.getHeader("Authorization");
+            if (!isBlank(auth) && auth.startsWith("Bearer ")) {
+                token = auth.substring("Bearer ".length()).trim();
+            }
         }
-        String token = auth.substring("Bearer ".length()).trim();
+        if (isBlank(token)) {
+            throw new JeecgBootException("missing X-Custom-Api-Token");
+        }
         CustomApiApp app = getOne(new LambdaQueryWrapper<CustomApiApp>()
                 .eq(CustomApiApp::getAccessTokenHash, CustomApiCrypto.sha256(token)), false);
         if (app == null || !app.isApiEnabled()) {
