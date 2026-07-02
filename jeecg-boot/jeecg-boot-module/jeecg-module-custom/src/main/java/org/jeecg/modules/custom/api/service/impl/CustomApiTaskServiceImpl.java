@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import lombok.extern.slf4j.Slf4j;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
@@ -50,7 +51,11 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, CustomApiTask> implements ICustomApiTaskService {
+    private static final int ERROR_CODE_MAX_LENGTH = 100;
+    private static final int ERROR_MESSAGE_MAX_LENGTH = 1000;
+
     private final ObjectMapper mapper = JsonMapper.builder()
             .addModule(customApiImportModule())
             .configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true)
@@ -209,6 +214,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
             }
             pushCallbackIfNeeded(task, result, null);
         } catch (Exception e) {
+            log.error("Custom API complete task failed, taskId={}", task.getTaskId(), e);
             failTask(task, e);
         }
     }
@@ -252,8 +258,8 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
     private void failTask(CustomApiTask task, Exception e) {
         task.setStatus(CustomApiTask.STATUS_FAILED);
         task.setStage("failed");
-        task.setErrorCode(e.getClass().getSimpleName());
-        task.setErrorMessage(e.getMessage());
+        task.setErrorCode(truncate(e.getClass().getSimpleName(), ERROR_CODE_MAX_LENGTH));
+        task.setErrorMessage(truncate(e.getMessage(), ERROR_MESSAGE_MAX_LENGTH));
         task.setFinishedAt(LocalDateTime.now());
         updateById(task);
         if (task.getTaskId() != null) {
@@ -296,7 +302,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
             task.setCallbackError(null);
         } catch (Exception callbackError) {
             task.setCallbackStatus("failed");
-            task.setCallbackError(callbackError.getMessage());
+            task.setCallbackError(truncate(callbackError.getMessage(), ERROR_MESSAGE_MAX_LENGTH));
         }
         updateById(task);
     }
@@ -362,6 +368,13 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 
     private static SimpleModule customApiImportModule() {

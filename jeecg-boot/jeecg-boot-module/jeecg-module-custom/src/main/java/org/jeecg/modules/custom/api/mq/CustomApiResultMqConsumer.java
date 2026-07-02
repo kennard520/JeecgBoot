@@ -33,7 +33,7 @@ public class CustomApiResultMqConsumer {
             channel.basicAck(deliveryTag, false);
         } catch (Exception e) {
             log.error("Custom API parse result handle failed", e);
-            channel.basicNack(deliveryTag, false, false);
+            channel.basicNack(deliveryTag, false, true);
         }
     }
 }
