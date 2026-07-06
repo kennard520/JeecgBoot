@@ -34,6 +34,9 @@ public class CustomApiInternalController {
     @Value("${custom.api.internal-token:}")
     private String internalToken;
 
+    @Value("${jeecg.path.upload:}")
+    private String uploadPath;
+
     @IgnoreAuth
     @GetMapping("/files/{fileId}/download")
     public ResponseEntity<FileSystemResource> downloadFile(
@@ -47,7 +50,7 @@ public class CustomApiInternalController {
         if (file == null || file.getStoragePath() == null || file.getStoragePath().isBlank()) {
             throw new JeecgBootException("file not found");
         }
-        Path path = Path.of(file.getStoragePath());
+        Path path = resolveStoragePath(file.getStoragePath());
         if (!Files.exists(path)) {
             throw new JeecgBootException("file content not found");
         }
@@ -57,5 +60,13 @@ public class CustomApiInternalController {
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
                 .body(new FileSystemResource(path));
+    }
+
+    private Path resolveStoragePath(String storagePath) {
+        Path path = Path.of(storagePath);
+        if (path.isAbsolute() || uploadPath == null || uploadPath.isBlank()) {
+            return path;
+        }
+        return Path.of(uploadPath).resolve(storagePath).normalize();
     }
 }

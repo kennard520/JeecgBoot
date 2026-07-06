@@ -100,7 +100,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
 
         customApiFileService.save(file);
         document.markParseStarted(taskId);
-        this.updateById(document);
+        updateParseStarted(document);
         customApiTaskMapper.insert(task);
 
         try {
@@ -241,7 +241,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         }
         Document document = requireDocumentByTaskId(taskId);
         document.markParsed(decHeadId);
-        this.updateById(document);
+        updateParseCompleted(document);
         return document;
     }
 
@@ -253,8 +253,39 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         }
         Document document = requireDocumentByTaskId(taskId);
         document.markFailed(errorMessage);
-        this.updateById(document);
+        updateParseFailed(document);
         return document;
+    }
+
+    private void updateParseStarted(Document document) {
+        lambdaUpdate()
+                .eq(Document::getId, document.getId())
+                .set(Document::getTaskId, document.getTaskId())
+                .set(Document::getStartedAt, document.getStartedAt())
+                .set(Document::getFinishedAt, null)
+                .set(Document::getDecHeadId, null)
+                .set(Document::getStatus, Document.STATUS_PARSING)
+                .set(Document::getErrorMessage, null)
+                .update();
+    }
+
+    private void updateParseCompleted(Document document) {
+        lambdaUpdate()
+                .eq(Document::getId, document.getId())
+                .set(Document::getDecHeadId, document.getDecHeadId())
+                .set(Document::getFinishedAt, document.getFinishedAt())
+                .set(Document::getStatus, Document.STATUS_COMPLETED)
+                .set(Document::getErrorMessage, null)
+                .update();
+    }
+
+    private void updateParseFailed(Document document) {
+        lambdaUpdate()
+                .eq(Document::getId, document.getId())
+                .set(Document::getFinishedAt, document.getFinishedAt())
+                .set(Document::getStatus, Document.STATUS_NOT_STARTED)
+                .set(Document::getErrorMessage, document.getErrorMessage())
+                .update();
     }
 
     private Document requireDocument(Long documentId) {

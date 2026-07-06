@@ -222,7 +222,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
             task.setStage("completed");
             task.setProgress(100);
             task.setFinishedAt(LocalDateTime.now());
-            updateById(task);
+            updateCompleted(task);
             if (task.getDocumentId() != null && decHeadId != null) {
                 documentService.completeParse(task.getTaskId(), decHeadId);
             }
@@ -270,7 +270,30 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         if (task.getStartedAt() == null) {
             task.setStartedAt(LocalDateTime.now());
         }
-        updateById(task);
+        lambdaUpdate()
+                .eq(CustomApiTask::getId, task.getId())
+                .set(CustomApiTask::getStatus, task.getStatus())
+                .set(CustomApiTask::getStage, task.getStage())
+                .set(CustomApiTask::getProgress, task.getProgress())
+                .set(CustomApiTask::getStartedAt, task.getStartedAt())
+                .set(CustomApiTask::getFinishedAt, null)
+                .set(CustomApiTask::getErrorCode, null)
+                .set(CustomApiTask::getErrorMessage, null)
+                .update();
+    }
+
+    private void updateCompleted(CustomApiTask task) {
+        lambdaUpdate()
+                .eq(CustomApiTask::getId, task.getId())
+                .set(CustomApiTask::getDecHeadId, task.getDecHeadId())
+                .set(CustomApiTask::getResultJson, task.getResultJson())
+                .set(CustomApiTask::getStatus, CustomApiTask.STATUS_SUCCEEDED)
+                .set(CustomApiTask::getStage, "completed")
+                .set(CustomApiTask::getProgress, 100)
+                .set(CustomApiTask::getFinishedAt, task.getFinishedAt())
+                .set(CustomApiTask::getErrorCode, null)
+                .set(CustomApiTask::getErrorMessage, null)
+                .update();
     }
 
     private void failTask(CustomApiTask task, Exception e) {
