@@ -106,8 +106,8 @@ public class PasswordGrantAuthenticationProvider implements AuthenticationProvid
         }
         String lowerCaseCaptcha = captcha.toLowerCase();
         // 加入密钥作为混淆，避免简单的拼接，被外部利用，用户自定义该密钥即可
-        String origin = lowerCaseCaptcha+checkKey+jeecgBaseConfig.getSignatureSecret();
-        String realKey = Md5Util.md5Encode(origin, "utf-8");
+        String keyPrefix = Md5Util.md5Encode(checkKey + jeecgBaseConfig.getSignatureSecret(), "utf-8");
+        String realKey = keyPrefix + lowerCaseCaptcha;
         Object checkCode = redisUtil.get(realKey);
         //当进入登录页时，有一定几率出现验证码错误 #1714
         if(checkCode==null || !checkCode.toString().equals(lowerCaseCaptcha)) {

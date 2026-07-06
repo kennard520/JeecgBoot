@@ -640,6 +640,12 @@ public class LoginController {
 			String realKey = keyPrefix + lowerCaseCode;
 			redisUtil.removeAll(keyPrefix);
 			redisUtil.set(realKey, lowerCaseCode, 60);
+			Object savedCode = redisUtil.get(realKey);
+			if (savedCode == null || !lowerCaseCode.equals(savedCode.toString())) {
+				log.error("获取验证码失败，验证码未成功写入Redis，key = {}", realKey);
+				res.error500("获取验证码失败,请检查redis配置!");
+				return res;
+			}
 			log.debug("获取验证码，Redis key = {}，checkCode = {}", realKey, code);
 			String base64 = RandImageUtil.generate(code);
 			res.setSuccess(true);
@@ -761,7 +767,8 @@ public class LoginController {
 			return Result.error("验证码无效");
 		}
 		String lowerCaseCaptcha = captcha.toLowerCase();
-		String realKey = Md5Util.md5Encode(lowerCaseCaptcha+checkKey, "utf-8");
+		String keyPrefix = Md5Util.md5Encode(checkKey + jeecgBaseConfig.getSignatureSecret(), "utf-8");
+		String realKey = keyPrefix + lowerCaseCaptcha;
 		Object checkCode = redisUtil.get(realKey);
 		if(checkCode==null || !checkCode.equals(lowerCaseCaptcha)) {
 			return Result.error("验证码错误");
@@ -921,7 +928,8 @@ public class LoginController {
 			return Result.error("验证码无效");
 		}
 		String lowerCaseCaptcha = captcha.toLowerCase();
-		String realKey = Md5Util.md5Encode(lowerCaseCaptcha+checkKey+jeecgBaseConfig.getSignatureSecret(), "utf-8");
+		String keyPrefix = Md5Util.md5Encode(checkKey + jeecgBaseConfig.getSignatureSecret(), "utf-8");
+		String realKey = keyPrefix + lowerCaseCaptcha;
 		Object checkCode = redisUtil.get(realKey);
 		if(checkCode==null || !checkCode.equals(lowerCaseCaptcha)) {
 			return Result.error("验证码错误");
