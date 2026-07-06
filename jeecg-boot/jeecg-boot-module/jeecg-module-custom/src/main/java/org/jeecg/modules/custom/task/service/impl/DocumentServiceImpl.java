@@ -12,6 +12,7 @@ import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.jeecg.modules.custom.api.mq.CustomApiTaskMqProducer;
 import org.jeecg.modules.custom.api.service.ICustomApiFileService;
+import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.util.CustomApiIds;
 import org.jeecg.modules.custom.task.entity.Document;
 import org.jeecg.modules.custom.task.mapper.DocumentMapper;
@@ -121,8 +122,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
     private String saveDocumentZip(MultipartFile file, String originalFilename) {
         try {
             SsrfFileTypeFilter.checkUploadFileType(file);
-            String safeFilename = CustomApiIds.safeFilename(originalFilename);
-            String storedFilename = appendTimestamp(safeFilename);
+            String storedFilename = buildStoredFilename(originalFilename);
             Path root = Path.of(uploadPath).toAbsolutePath().normalize();
             Path dir = root.resolve(DOCUMENT_BIZ_PATH).normalize();
             Path target = dir.resolve(storedFilename).normalize();
@@ -139,12 +139,14 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         }
     }
 
-    private String appendTimestamp(String filename) {
+    private String buildStoredFilename(String filename) {
         String safe = oConvertUtils.isEmpty(filename) ? "upload.zip" : filename;
         int dot = safe.lastIndexOf(".");
-        String suffix = dot >= 0 ? safe.substring(dot) : "";
-        String name = dot >= 0 ? safe.substring(0, dot) : safe;
-        return name + "_" + System.currentTimeMillis() + suffix;
+        String suffix = dot >= 0 ? safe.substring(dot).toLowerCase(Locale.ROOT) : ".zip";
+        if (!".zip".equals(suffix)) {
+            suffix = ".zip";
+        }
+        return "doc_" + System.currentTimeMillis() + "_" + CustomApiCrypto.randomToken("", 4) + suffix;
     }
 
     private CustomApiFile buildApiFile(Document document) {
