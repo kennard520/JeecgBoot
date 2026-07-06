@@ -94,6 +94,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         if (Document.STATUS_COMPLETED.equals(document.getStatus())) {
             throw new JeecgBootException("文档已解析完成，不能重复创建解析任务");
         }
+        ensureDocumentFileAvailable(document);
         String taskId = CustomApiIds.taskId();
         CustomApiFile file = buildApiFile(document);
         CustomApiTask task = buildApiTask(document, file, taskId);
@@ -117,6 +118,20 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             throw new JeecgBootException("failed to enqueue parse task: " + e.getMessage());
         }
         return document;
+    }
+
+    private void ensureDocumentFileAvailable(Document document) {
+        String storageType = firstNonBlank(document.getStorageType(), uploadType, CommonConstant.UPLOAD_TYPE_LOCAL);
+        if (!CommonConstant.UPLOAD_TYPE_LOCAL.equals(storageType)) {
+            return;
+        }
+        String storagePath = resolveStoragePath(document, storageType);
+        if (oConvertUtils.isEmpty(storagePath) || !Files.isRegularFile(Path.of(storagePath))) {
+            String message = "源文件不存在，请重新上传后再解析";
+            document.markFailed(message);
+            updateParseFailed(document);
+            throw new JeecgBootException(message);
+        }
     }
 
     private String saveDocumentZip(MultipartFile file, String originalFilename) {
