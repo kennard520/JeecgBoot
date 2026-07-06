@@ -283,7 +283,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         lambdaUpdate()
                 .eq(Document::getId, document.getId())
                 .set(Document::getFinishedAt, document.getFinishedAt())
-                .set(Document::getStatus, Document.STATUS_NOT_STARTED)
+                .set(Document::getStatus, Document.STATUS_FAILED)
                 .set(Document::getErrorMessage, document.getErrorMessage())
                 .update();
     }

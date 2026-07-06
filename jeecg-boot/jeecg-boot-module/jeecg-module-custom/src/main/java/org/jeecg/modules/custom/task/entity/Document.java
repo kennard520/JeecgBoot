@@ -26,6 +26,7 @@ public class Document implements Serializable {
     public static final String STATUS_NOT_STARTED = DocumentStatus.NOT_STARTED.getCode();
     public static final String STATUS_PARSING = DocumentStatus.PARSING.getCode();
     public static final String STATUS_COMPLETED = DocumentStatus.COMPLETED.getCode();
+    public static final String STATUS_FAILED = DocumentStatus.FAILED.getCode();
 
     /**
      * 兼容旧调用语义：文件上传后即进入“未开始”状态，解析完成后进入“已完成”状态。
@@ -36,7 +37,8 @@ public class Document implements Serializable {
     public enum DocumentStatus {
         NOT_STARTED("NOT_STARTED", "未开始"),
         PARSING("PARSING", "解析中"),
-        COMPLETED("COMPLETED", "已完成");
+        COMPLETED("COMPLETED", "已完成"),
+        FAILED("FAILED", "解析失败");
 
         private final String code;
         private final String text;
@@ -160,7 +162,7 @@ public class Document implements Serializable {
 
     public void markFailed(String errorMessage) {
         this.finishedAt = LocalDateTime.now();
-        this.status = STATUS_NOT_STARTED;
+        this.status = STATUS_FAILED;
         this.errorMessage = errorMessage;
     }
 

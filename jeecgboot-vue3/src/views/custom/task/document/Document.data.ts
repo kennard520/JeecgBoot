@@ -4,12 +4,14 @@ export const DOCUMENT_STATUS = {
   NOT_STARTED: 'NOT_STARTED',
   PARSING: 'PARSING',
   COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
 };
 
 const statusOptions = [
   { label: '未开始', value: DOCUMENT_STATUS.NOT_STARTED },
   { label: '解析中', value: DOCUMENT_STATUS.PARSING },
   { label: '已完成', value: DOCUMENT_STATUS.COMPLETED },
+  { label: '解析失败', value: DOCUMENT_STATUS.FAILED },
 ];
 
 export const columns: BasicColumn[] = [

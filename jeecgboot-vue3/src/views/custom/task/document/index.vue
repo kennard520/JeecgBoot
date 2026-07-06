@@ -70,6 +70,10 @@
     return record?.status === DOCUMENT_STATUS.NOT_STARTED;
   }
 
+  function canStartParse(record) {
+    return [DOCUMENT_STATUS.NOT_STARTED, DOCUMENT_STATUS.FAILED].includes(record?.status);
+  }
+
   function isCompleted(record) {
     return record?.status === DOCUMENT_STATUS.COMPLETED;
   }
@@ -133,7 +137,7 @@
       {
         label: '开始解析',
         onClick: handleStartParse.bind(null, record),
-        ifShow: isNotStarted(record),
+        ifShow: canStartParse(record),
       },
       {
         label: '查看',
