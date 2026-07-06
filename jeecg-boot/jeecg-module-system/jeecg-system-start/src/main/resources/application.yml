@@ -27,6 +27,6 @@ spring:
 custom:
   api:
     internal-base-url: ${CUSTOM_API_INTERNAL_BASE_URL:http://124.223.39.167:8080/jeecg-boot}
-    internal-token: ${CUSTOM_API_INTERNAL_TOKEN:}
+    internal-token: ${CUSTOM_API_INTERNAL_TOKEN:cit-internal-file-download-2026}
     internal-customer-code: ${CUSTOM_API_INTERNAL_CUSTOMER_CODE:INTERNAL}
     internal-company-code: ${CUSTOM_API_INTERNAL_COMPANY_CODE:CUSTOMS}
