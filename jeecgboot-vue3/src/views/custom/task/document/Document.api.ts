@@ -11,8 +11,12 @@ enum Api {
 
 export const list = (params) => defHttp.get({ url: Api.list, params });
 
-export const uploadZip = (file: File) => {
-  return defHttp.uploadFile({ url: Api.uploadZip }, { file }, { isReturnResponse: true });
+export const uploadZip = async (file: File) => {
+  const response = await defHttp.uploadFile({ url: Api.uploadZip }, { file }, { isReturnResponse: true });
+  if (!response?.success || response?.code !== 200) {
+    throw new Error(response?.message || '上传失败');
+  }
+  return response.result;
 };
 
 export const startParse = (id: string | number) => {

@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.exception.JeecgBootException;
-import org.jeecg.common.util.CommonUtils;
+import org.jeecg.common.util.filter.SsrfFileTypeFilter;
 import org.jeecg.common.util.oConvertUtils;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -75,10 +76,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             throw new JeecgBootException("仅支持上传.zip压缩包");
         }
 
-        String storagePath = CommonUtils.uploadLocal(file, DOCUMENT_BIZ_PATH, uploadPath);
-        if (oConvertUtils.isEmpty(storagePath)) {
-            throw new JeecgBootException("文件上传失败");
-        }
+        String storagePath = saveDocumentZip(file, originalFilename);
 
         Document document = new Document();
         document.markUploaded(originalFilename, storagePath, CommonConstant.UPLOAD_TYPE_LOCAL, file.getSize(), file.getContentType());
@@ -118,6 +116,35 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             throw new JeecgBootException("failed to enqueue parse task: " + e.getMessage());
         }
         return document;
+    }
+
+    private String saveDocumentZip(MultipartFile file, String originalFilename) {
+        try {
+            SsrfFileTypeFilter.checkUploadFileType(file);
+            String safeFilename = CustomApiIds.safeFilename(originalFilename);
+            String storedFilename = appendTimestamp(safeFilename);
+            Path root = Path.of(uploadPath).toAbsolutePath().normalize();
+            Path dir = root.resolve(DOCUMENT_BIZ_PATH).normalize();
+            Path target = dir.resolve(storedFilename).normalize();
+            if (!target.startsWith(dir)) {
+                throw new JeecgBootException("invalid upload filename");
+            }
+            Files.createDirectories(dir);
+            file.transferTo(target);
+            return DOCUMENT_BIZ_PATH + "/" + storedFilename;
+        } catch (JeecgBootException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new JeecgBootException("文件上传失败: " + e.getMessage());
+        }
+    }
+
+    private String appendTimestamp(String filename) {
+        String safe = oConvertUtils.isEmpty(filename) ? "upload.zip" : filename;
+        int dot = safe.lastIndexOf(".");
+        String suffix = dot >= 0 ? safe.substring(dot) : "";
+        String name = dot >= 0 ? safe.substring(0, dot) : safe;
+        return name + "_" + System.currentTimeMillis() + suffix;
     }
 
     private CustomApiFile buildApiFile(Document document) {

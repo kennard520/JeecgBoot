@@ -84,6 +84,8 @@
       await uploadZip(file as File);
       createMessage.success('上传成功');
       await reload();
+    } catch (error: any) {
+      createMessage.error(error?.message || '上传失败');
     } finally {
       uploading.value = false;
     }
