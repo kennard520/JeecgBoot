@@ -106,7 +106,8 @@ jobs:
             APP_DIR=/opt/app/${NAME}
             LOG_DIR=${APP_DIR}/logs
             CONFIG_DIR=${APP_DIR}/config
-            mkdir -p $LOG_DIR $CONFIG_DIR
+            UPLOAD_DIR=${APP_DIR}/upload
+            mkdir -p $LOG_DIR $CONFIG_DIR $UPLOAD_DIR
 
             docker login ${{ env.ACR_REGISTRY }} -u '${{ secrets.ACR_USERNAME }}' -p '${{ secrets.ACR_PASSWORD }}'
             docker pull $IMAGE
@@ -130,6 +131,7 @@ jobs:
                 -e TZ=Asia/Shanghai \
                 -v $LOG_DIR:/jeecg-boot/logs \
                 -v $CONFIG_DIR:/jeecg-boot/config \
+                -v $UPLOAD_DIR:/opt/upFiles \
                 $img
             }
 
