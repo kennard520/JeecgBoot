@@ -75,15 +75,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             throw new JeecgBootException("仅支持上传.zip压缩包");
         }
 
-        String storagePath = CommonConstant.UPLOAD_TYPE_LOCAL.equals(uploadType)
-                ? CommonUtils.uploadLocal(file, DOCUMENT_BIZ_PATH, uploadPath)
-                : CommonUtils.upload(file, DOCUMENT_BIZ_PATH, uploadType);
+        String storagePath = CommonUtils.uploadLocal(file, DOCUMENT_BIZ_PATH, uploadPath);
         if (oConvertUtils.isEmpty(storagePath)) {
             throw new JeecgBootException("文件上传失败");
         }
 
         Document document = new Document();
-        document.markUploaded(originalFilename, storagePath, uploadType, file.getSize(), file.getContentType());
+        document.markUploaded(originalFilename, storagePath, CommonConstant.UPLOAD_TYPE_LOCAL, file.getSize(), file.getContentType());
         this.save(document);
         return document;
     }
