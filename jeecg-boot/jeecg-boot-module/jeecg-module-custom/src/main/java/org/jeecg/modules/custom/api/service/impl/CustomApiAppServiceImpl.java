@@ -10,6 +10,9 @@ import org.jeecg.modules.custom.api.service.ICustomApiAppService;
 import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.vo.AuthTokenRequest;
 import org.jeecg.modules.custom.api.vo.AuthTokenResponse;
+import org.jeecg.modules.custom.api.vo.CustomApiAppResponse;
+import org.jeecg.modules.custom.api.vo.CustomApiAppSaveRequest;
+import org.jeecg.modules.custom.api.vo.CustomApiAppSecretResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +24,94 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
 
     @Value("${custom.api.token-ttl-seconds:7200}")
     private Long tokenTtlSeconds;
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CustomApiAppSecretResponse createApp(CustomApiAppSaveRequest request) {
+        validateSaveRequest(request, true);
+        if (appKeyExists(request.getAppKey(), null)) {
+            throw new JeecgBootException("appKey already exists");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        String appSecret = CustomApiCrypto.randomToken("cai_sec_", 24);
+        CustomApiApp app = new CustomApiApp()
+                .setAppKey(request.getAppKey().trim())
+                .setAppSecretHash(CustomApiCrypto.sha256(appSecret))
+                .setCustomerCode(request.getCustomerCode().trim())
+                .setCompanyCode(request.getCompanyCode().trim())
+                .setEnabled(request.getEnabled() == null ? 1 : request.getEnabled())
+                .setRateLimit(request.getRateLimit() == null ? 60 : request.getRateLimit())
+                .setCreatedAt(now)
+                .setUpdatedAt(now);
+        save(app);
+        return CustomApiAppSecretResponse.fromApp(CustomApiAppResponse.fromEntity(app), appSecret);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CustomApiAppResponse updateApp(CustomApiAppSaveRequest request) {
+        validateSaveRequest(request, false);
+        CustomApiApp app = getById(request.getId());
+        if (app == null) {
+            throw new JeecgBootException("app not found");
+        }
+        if (appKeyExists(request.getAppKey(), request.getId())) {
+            throw new JeecgBootException("appKey already exists");
+        }
+
+        app.setAppKey(request.getAppKey().trim())
+                .setCustomerCode(request.getCustomerCode().trim())
+                .setCompanyCode(request.getCompanyCode().trim())
+                .setEnabled(request.getEnabled() == null ? 1 : request.getEnabled())
+                .setRateLimit(request.getRateLimit() == null ? 60 : request.getRateLimit())
+                .setUpdatedAt(LocalDateTime.now());
+        updateById(app);
+        return CustomApiAppResponse.fromEntity(app);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CustomApiAppSecretResponse resetSecret(Long id) {
+        CustomApiApp app = getById(id);
+        if (app == null) {
+            throw new JeecgBootException("app not found");
+        }
+        String appSecret = CustomApiCrypto.randomToken("cai_sec_", 24);
+        app.setAppSecretHash(CustomApiCrypto.sha256(appSecret));
+        app.setAccessTokenHash(null);
+        app.setTokenExpireAt(null);
+        app.setUpdatedAt(LocalDateTime.now());
+        updateById(app);
+        return CustomApiAppSecretResponse.fromApp(CustomApiAppResponse.fromEntity(app), appSecret);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CustomApiAppResponse clearAccessToken(Long id) {
+        CustomApiApp app = getById(id);
+        if (app == null) {
+            throw new JeecgBootException("app not found");
+        }
+        app.setAccessTokenHash(null);
+        app.setTokenExpireAt(null);
+        app.setUpdatedAt(LocalDateTime.now());
+        updateById(app);
+        return CustomApiAppResponse.fromEntity(app);
+    }
+
+    @Override
+    public boolean appKeyExists(String appKey, Long excludeId) {
+        if (isBlank(appKey)) {
+            return false;
+        }
+        LambdaQueryWrapper<CustomApiApp> wrapper = new LambdaQueryWrapper<CustomApiApp>()
+                .eq(CustomApiApp::getAppKey, appKey.trim());
+        if (excludeId != null) {
+            wrapper.ne(CustomApiApp::getId, excludeId);
+        }
+        return count(wrapper) > 0;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -73,5 +164,23 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private void validateSaveRequest(CustomApiAppSaveRequest request, boolean create) {
+        if (request == null) {
+            throw new JeecgBootException("request is required");
+        }
+        if (!create && request.getId() == null) {
+            throw new JeecgBootException("id is required");
+        }
+        if (isBlank(request.getAppKey())) {
+            throw new JeecgBootException("appKey is required");
+        }
+        if (isBlank(request.getCustomerCode())) {
+            throw new JeecgBootException("customerCode is required");
+        }
+        if (isBlank(request.getCompanyCode())) {
+            throw new JeecgBootException("companyCode is required");
+        }
     }
 }

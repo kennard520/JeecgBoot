@@ -95,7 +95,33 @@ All following customer API requests must carry:
 Authorization: Bearer <accessToken>
 ```
 
-### 3.2 Apply for upload URL
+### 3.2 Manage customer apps
+
+Logged-in JeecgBoot operators manage external customer credentials in the Java facade, not in `customs-ai`.
+
+```text
+GET    /custom/api/app/list
+POST   /custom/api/app/add
+PUT    /custom/api/app/edit
+POST   /custom/api/app/resetSecret?id={id}
+POST   /custom/api/app/clearAccessToken?id={id}
+DELETE /custom/api/app/delete?id={id}
+DELETE /custom/api/app/deleteBatch?ids={ids}
+GET    /custom/api/app/checkAppKey?appKey={appKey}&id={id}
+```
+
+Frontend page:
+
+```text
+/custom/api/app
+component: custom/api/app/index
+```
+
+Create and reset operations return the plaintext `appSecret` once. List/detail responses must not expose `app_secret_hash` or `access_token_hash`.
+
+`companyCode` is the RabbitMQ routing key. Use `CUSTOMS` for the common worker; use a dedicated code only when a matching `customs.parse.request.<companyCode>` worker queue exists.
+
+### 3.3 Apply for upload URL
 
 ```text
 POST /custom/api/files/upload-url
@@ -129,7 +155,7 @@ Response:
 }
 ```
 
-### 3.3 Confirm upload completion
+### 3.4 Confirm upload completion
 
 ```text
 POST /custom/api/files/{fileId}/complete
@@ -156,7 +182,7 @@ Response:
 }
 ```
 
-### 3.4 Create parse task
+### 3.5 Create parse task
 
 ```text
 POST /custom/api/tasks
@@ -196,7 +222,7 @@ Response:
 }
 ```
 
-### 3.5 Query task status
+### 3.6 Query task status
 
 ```text
 GET /custom/api/tasks/{taskId}
@@ -225,7 +251,7 @@ failed
 cancelled
 ```
 
-### 3.6 Get parse result
+### 3.7 Get parse result
 
 ```text
 GET /custom/api/tasks/{taskId}/result
@@ -343,6 +369,8 @@ CUSTOM_API_APP
 - company_code
 - enabled
 - rate_limit
+- access_token_hash
+- token_expire_at
 - created_at
 - updated_at
 ```

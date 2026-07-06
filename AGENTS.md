@@ -80,6 +80,7 @@ Important backend modules:
   - CIT packages follow `controller`, `entity`, `mapper`, `mapper/xml`, `service`, `service/impl`; generated entity comments preserve SQL table/column comments.
   - REST paths use `/custom/cit/<lowerCamelTableName>`, for example `/custom/cit/decHead/list`.
   - External Customs-AI customer APIs belong in this module as the Java facade. Customers authenticate, upload files, create tasks, poll results, and receive callbacks through JeecgBoot; the separate `customs-ai` Python service is only the internal parsing engine. Task creation publishes a RabbitMQ parse request with routing key `companyCode`; `customs-ai` workers consume `customs.parse.request.<companyCode>` and publish parse results back to `customs.parse.result.java`, where JeecgBoot imports CIT rows and pushes callbacks. Detailed design: `jeecg-boot/jeecg-boot-module/jeecg-module-custom/docs/customs-ai-facade-api-design.md`.
+  - External customer credentials are managed by the logged-in backend page `/custom/api/app` and backend APIs under `/custom/api/app/*`. The page creates `CUSTOM_API_APP` rows, generates one-time AppSecret values, resets secrets, enables/disables apps, and clears issued access tokens. Do not expose `app_secret_hash` or `access_token_hash` in management responses.
   - The internal document task page `/custom/task/document` also uses the same Customs-AI facade/MQ path: `DocumentServiceImpl.startParse()` creates `CUSTOM_API_FILE` and `CUSTOM_API_TASK` rows from the uploaded `DOCUMENTS` record, publishes the parse request, and the result listener updates both `CUSTOM_API_TASK` and `DOCUMENTS` before the page opens `/custom/cit/single-window?decHeadId=...`.
 
 - `jeecg-boot-module/jeecg-boot-module-airag`
@@ -166,6 +167,10 @@ Custom frontend additions:
   - Uses the generated backend REST APIs under `/custom/cit/*`.
   - Main files: `cit.api.ts` for endpoint wrappers, `cit.data.ts` for field/table/tab metadata, `composables/useSingleWindowDeclaration.ts` for page state, and split components under `components/`.
   - Layout follows the reference under `/Users/wayne/Downloads/singlewindow` conceptually: fixed dense toolbar, declaration head form, goods detail section, related-data tabs, and a right-side declaration list. It intentionally does not import the old Bootstrap/jQuery assets.
+- `src/views/custom/api/app`: Customs-AI external API customer credential management page.
+  - Route: `/custom/api/app`; backend menu component path is `custom/api/app/index`.
+  - Uses `/custom/api/app/*` logged-in management APIs to create/edit customer apps, reset one-time AppSecret values, enable/disable customers, and clear issued access tokens.
+  - `companyCode` is the MQ routing key: use `CUSTOMS` for the common worker and a dedicated code such as `YINMEINA` only when a matching worker queue exists.
 
 Common frontend commands:
 

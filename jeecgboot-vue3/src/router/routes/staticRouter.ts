@@ -45,6 +45,14 @@ export const CUSTOM_CIT_ROUTE: AppRouteRecordRaw = {
         title: '文档解析任务',
       },
     },
+    {
+      path: 'api/app',
+      name: 'CustomApiApp',
+      component: () => import('/@/views/custom/api/app/index.vue'),
+      meta: {
+        title: 'API客户管理',
+      },
+    },
   ],
 };
 
