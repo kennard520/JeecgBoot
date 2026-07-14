@@ -1,5 +1,6 @@
 import { Modal } from 'ant-design-vue';
 import { defHttp } from '/@/utils/http/axios';
+import { buildApiAppAgentPayload, normalizeApiAppAgentFields } from './apiAppAgentModel';
 
 enum Api {
   list = '/custom/api/app/list',
@@ -10,13 +11,78 @@ enum Api {
   resetSecret = '/custom/api/app/resetSecret',
   clearAccessToken = '/custom/api/app/clearAccessToken',
   checkAppKey = '/custom/api/app/checkAppKey',
+  enabledAgents = '/custom/ai/admin/agents',
+  appGrants = '/custom/ai/admin/app-grants',
 }
 
-export const list = (params) => defHttp.get({ url: Api.list, params });
+function isEnabled(value: unknown) {
+  return value === undefined || value === null || value === true || value === 1 || value === '1';
+}
 
-export const saveOrUpdate = (params, isUpdate) => {
+async function getAppAgentFields(record: any) {
+  const compatible = normalizeApiAppAgentFields(record);
+  if (!record?.id) {
+    return compatible;
+  }
+  try {
+    const grants = await defHttp.get({ url: `${Api.appGrants}/${record.id}` });
+    const enabledGrants = (Array.isArray(grants) ? grants : []).filter((item) => isEnabled(item.enabled));
+    if (enabledGrants.length === 0) {
+      return compatible;
+    }
+    const allowedAgentCodes = enabledGrants.map((item) => item.agentCode).filter(Boolean);
+    const defaultGrant = enabledGrants.find((item) => `${item.isDefault ?? 0}` === '1');
+    return {
+      allowedAgentCodes,
+      defaultAgentCode: defaultGrant?.agentCode || compatible.defaultAgentCode || allowedAgentCodes[0],
+    };
+  } catch (_error) {
+    return compatible;
+  }
+}
+
+export const list = async (params) => {
+  const page = await defHttp.get({ url: Api.list, params });
+  const records = page?.records || [];
+  const enrichedRecords = await Promise.all(
+    records.map(async (record) => ({
+      ...record,
+      ...(await getAppAgentFields(record)),
+    }))
+  );
+  return { ...page, records: enrichedRecords };
+};
+
+export const saveOrUpdate = async (params, isUpdate) => {
   const url = isUpdate ? Api.edit : Api.save;
-  return isUpdate ? defHttp.put({ url, data: params }) : defHttp.post({ url, data: params });
+  const normalized = buildApiAppAgentPayload(params);
+  const { allowedAgentCodes, defaultAgentCode, agentCodes: _agentCodes, ...data } = normalized;
+  const result = isUpdate ? await defHttp.put({ url, data }) : await defHttp.post({ url, data });
+  const appId = result?.id || params.id;
+  if (!appId) {
+    throw new Error('API 应用保存成功但未返回 appId');
+  }
+  await defHttp.put({
+    url: Api.appGrants,
+    data: {
+      appId,
+      agentCodes: allowedAgentCodes,
+      defaultAgentCode,
+    },
+  });
+  return { ...result, allowedAgentCodes, defaultAgentCode };
+};
+
+export const listEnabledAgents = async () => {
+  const result = await defHttp.get({ url: Api.enabledAgents });
+  const records = Array.isArray(result) ? result : result?.records || result?.list || [];
+  return records
+    .filter((item) => isEnabled(item.enabled))
+    .map((item) => ({
+      ...item,
+      agentCode: item.agentCode || item.code,
+      agentName: item.agentName || item.name || item.agentCode || item.code,
+    }));
 };
 
 export const resetSecret = (id: string | number) => {

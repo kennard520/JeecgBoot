@@ -10,6 +10,7 @@
   import { BasicDrawer, useDrawerInner } from '/@/components/Drawer';
   import { formSchema } from '../CustomApiApp.data';
   import { saveOrUpdate } from '../CustomApiApp.api';
+  import { buildApiAppAgentPayload, normalizeApiAppAgentFields } from '../apiAppAgentModel';
 
   const emit = defineEmits(['success', 'register']);
   const isUpdate = ref(false);
@@ -25,13 +26,16 @@
     isUpdate.value = !!data?.isUpdate;
     setDrawerProps({ confirmLoading: false });
     if (unref(isUpdate)) {
+      const agentFields = normalizeApiAppAgentFields(data.record);
       await setFieldsValue({
         ...data.record,
+        ...agentFields,
         enabled: `${data.record.enabled ?? 1}`,
       });
     } else {
       await setFieldsValue({
-        companyCode: 'CUSTOMS',
+        allowedAgentCodes: [],
+        defaultAgentCode: undefined,
         enabled: '1',
         rateLimit: 60,
       });
@@ -42,7 +46,7 @@
 
   async function handleSubmit() {
     try {
-      const values = await validate();
+      const values = buildApiAppAgentPayload(await validate());
       setDrawerProps({ confirmLoading: true });
       const result = await saveOrUpdate(values, isUpdate.value);
       closeDrawer();

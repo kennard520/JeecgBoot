@@ -2,16 +2,20 @@ import { BasicColumn, FormSchema } from '/@/components/Table';
 
 export const DOCUMENT_STATUS = {
   NOT_STARTED: 'NOT_STARTED',
+  QUEUED: 'QUEUED',
   PARSING: 'PARSING',
   COMPLETED: 'COMPLETED',
   FAILED: 'FAILED',
+  TIMEOUT: 'TIMEOUT',
 };
 
 const statusOptions = [
   { label: '未开始', value: DOCUMENT_STATUS.NOT_STARTED },
+  { label: '排队中', value: DOCUMENT_STATUS.QUEUED },
   { label: '解析中', value: DOCUMENT_STATUS.PARSING },
   { label: '已完成', value: DOCUMENT_STATUS.COMPLETED },
   { label: '解析失败', value: DOCUMENT_STATUS.FAILED },
+  { label: '解析超时', value: DOCUMENT_STATUS.TIMEOUT },
 ];
 
 export const columns: BasicColumn[] = [
@@ -33,6 +37,22 @@ export const columns: BasicColumn[] = [
     width: 90,
     customRender({ text }) {
       return statusOptions.find((item) => item.value === text)?.label || text || '-';
+    },
+  },
+  {
+    title: '智能体',
+    dataIndex: 'agentCode',
+    width: 150,
+    ellipsis: true,
+  },
+  {
+    title: '进度',
+    dataIndex: 'progress',
+    width: 80,
+    align: 'right',
+    customRender({ text }) {
+      if (text === undefined || text === null || text === '') return '-';
+      return `${text}%`;
     },
   },
   {

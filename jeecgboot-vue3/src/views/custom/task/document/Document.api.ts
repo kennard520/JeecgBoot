@@ -1,5 +1,6 @@
 import { Modal } from 'ant-design-vue';
 import { defHttp } from '/@/utils/http/axios';
+import { buildDocumentUploadData } from './documentWorkflow';
 
 enum Api {
   list = '/custom/task/document/list',
@@ -7,12 +8,15 @@ enum Api {
   deleteBatch = '/custom/task/document/deleteBatch',
   uploadZip = '/custom/task/document/uploadZip',
   startParse = '/custom/task/document/startParse',
+  myAgents = '/custom/ai/agents/mine',
 }
 
 export const list = (params) => defHttp.get({ url: Api.list, params });
 
-export const uploadZip = async (file: File) => {
-  const response = await defHttp.uploadFile({ url: Api.uploadZip }, { file }, { isReturnResponse: true });
+export const getMyAgents = () => defHttp.get({ url: Api.myAgents });
+
+export const uploadZip = async (file: File, agentCode: string) => {
+  const response = await defHttp.uploadFile({ url: Api.uploadZip }, { file, data: buildDocumentUploadData(agentCode) }, { isReturnResponse: true });
   if (!response?.success || response?.code !== 200) {
     throw new Error(response?.message || '上传失败');
   }

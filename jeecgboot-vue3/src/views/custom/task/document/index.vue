@@ -2,9 +2,27 @@
   <div>
     <BasicTable @register="registerTable" :rowSelection="rowSelection">
       <template #tableTitle>
-        <a-upload :showUploadList="false" accept=".zip" :beforeUpload="handleBeforeUpload">
-          <a-button type="primary" :loading="uploading" preIcon="ant-design:upload-outlined">上传ZIP</a-button>
-        </a-upload>
+        <a-select
+          v-if="agentSelection.mode === 'select'"
+          v-model:value="selectedAgentCode"
+          :options="agentSelectOptions"
+          style="width: 190px"
+          aria-label="选择智能体"
+          @change="rememberAgent"
+        />
+        <span v-else-if="agentSelection.mode === 'readonly'" class="agent-context">
+          <Icon icon="ant-design:robot-outlined" />
+          {{ agentSelection.options[0]?.agentName }}
+        </span>
+        <a-tooltip :title="uploadDisabled ? '当前账号未配置可用智能体，请联系管理员' : ''">
+          <span>
+            <a-upload :showUploadList="false" accept=".zip" :beforeUpload="handleBeforeUpload" :disabled="uploadDisabled">
+              <a-button type="primary" :loading="uploading || agentsLoading" :disabled="uploadDisabled" preIcon="ant-design:upload-outlined">
+                上传ZIP
+              </a-button>
+            </a-upload>
+          </span>
+        </a-tooltip>
         <a-dropdown v-if="selectedRowKeys.length > 0">
           <template #overlay>
             <a-menu>
@@ -28,7 +46,7 @@
 </template>
 
 <script lang="ts" name="custom-task-document" setup>
-  import { computed, ref } from 'vue';
+  import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
   import type { UploadProps } from 'ant-design-vue';
   import { BasicTable, TableAction } from '/@/components/Table';
   import { Icon } from '/@/components/Icon';
@@ -36,12 +54,32 @@
   import { useGo } from '/@/hooks/web/usePage';
   import { useMessage } from '/@/hooks/web/useMessage';
   import { columns, DOCUMENT_STATUS, searchFormSchema } from './Document.data';
-  import { batchDelete, deleteOne, list, startParse, uploadZip } from './Document.api';
+  import { batchDelete, deleteOne, getMyAgents, list, startParse, uploadZip } from './Document.api';
+  import { createDocumentPolling, type DocumentPollingController } from './documentPolling';
+  import {
+    canRetryDocument,
+    createAgentSelectionState,
+    getDocumentNavigationPath,
+    isActiveDocumentStatus,
+    normalizeAgentOptions,
+    type AgentOption,
+  } from './documentWorkflow';
+
+  defineOptions({ name: 'CustomTaskDocument' });
 
   const go = useGo();
   const { createMessage } = useMessage();
   const uploading = ref(false);
+  const agentsLoading = ref(true);
+  const agents = ref<AgentOption[]>([]);
+  const selectedAgentCode = ref<string>();
   const queryParam = {};
+  const RECENT_AGENT_KEY = 'customs:recent-agent-code';
+  let polling: DocumentPollingController | undefined;
+
+  const agentSelection = computed(() => createAgentSelectionState(agents.value, selectedAgentCode.value));
+  const agentSelectOptions = computed(() => agents.value.map((item) => ({ label: item.agentName, value: item.agentCode })));
+  const uploadDisabled = computed(() => agentsLoading.value || agentSelection.value.uploadDisabled);
 
   const { tableContext } = useListPage({
     tableProps: {
@@ -60,6 +98,10 @@
         fixed: 'right',
       },
       beforeFetch: (params) => Object.assign(params, queryParam),
+      afterFetch: (records) => {
+        polling?.setActive(records.some((record) => isActiveDocumentStatus(record.status)));
+        return records;
+      },
     },
   });
 
@@ -70,12 +112,51 @@
     return record?.status === DOCUMENT_STATUS.NOT_STARTED;
   }
 
-  function canStartParse(record) {
-    return [DOCUMENT_STATUS.NOT_STARTED, DOCUMENT_STATUS.FAILED].includes(record?.status);
-  }
-
   function isCompleted(record) {
     return record?.status === DOCUMENT_STATUS.COMPLETED;
+  }
+
+  polling = createDocumentPolling({
+    reload: async () => {
+      await reload();
+    },
+    isVisible: () => document.visibilityState === 'visible',
+  });
+
+  onMounted(() => {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    void loadAgents();
+  });
+
+  onBeforeUnmount(() => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    polling?.stop();
+  });
+
+  async function loadAgents() {
+    agentsLoading.value = true;
+    try {
+      agents.value = normalizeAgentOptions(await getMyAgents());
+      const remembered = localStorage.getItem(RECENT_AGENT_KEY) || undefined;
+      selectedAgentCode.value = createAgentSelectionState(agents.value, remembered).selectedAgentCode;
+      rememberAgent(selectedAgentCode.value);
+    } catch (error: any) {
+      agents.value = [];
+      selectedAgentCode.value = undefined;
+      createMessage.error(error?.message || '可用智能体加载失败');
+    } finally {
+      agentsLoading.value = false;
+    }
+  }
+
+  function rememberAgent(agentCode?: string) {
+    if (agentCode) {
+      localStorage.setItem(RECENT_AGENT_KEY, agentCode);
+    }
+  }
+
+  function handleVisibilityChange() {
+    polling?.handleVisibilityChange();
   }
 
   const handleBeforeUpload: UploadProps['beforeUpload'] = async (file) => {
@@ -83,10 +164,14 @@
       createMessage.warning('只能上传.zip压缩包');
       return false;
     }
+    if (!selectedAgentCode.value) {
+      createMessage.warning('当前账号未配置可用智能体，请联系管理员');
+      return false;
+    }
     uploading.value = true;
     try {
-      await uploadZip(file as File);
-      createMessage.success('上传成功');
+      await uploadZip(file as File, selectedAgentCode.value);
+      createMessage.success('已上传并进入解析队列');
       await reload();
     } catch (error: any) {
       createMessage.error(error?.message || '上传失败');
@@ -98,7 +183,7 @@
 
   async function handleStartParse(record) {
     await startParse(record.id);
-    createMessage.success('已创建解析任务');
+    createMessage.success(record.status === DOCUMENT_STATUS.NOT_STARTED ? '已创建解析任务' : '已重新加入解析队列');
     await reload();
   }
 
@@ -120,11 +205,12 @@
   }
 
   function handleView(record) {
-    if (!record.decHeadId) {
+    const path = getDocumentNavigationPath(record);
+    if (!path) {
       createMessage.warning('该文档尚未关联报关单');
       return;
     }
-    go(record.singleWindowPath || `/custom/cit/single-window?decHeadId=${record.decHeadId}`);
+    go(path);
   }
 
   function handleSuccess() {
@@ -137,7 +223,7 @@
       {
         label: '开始解析',
         onClick: handleStartParse.bind(null, record),
-        ifShow: canStartParse(record),
+        ifShow: canRetryDocument(record?.status),
       },
       {
         label: '查看',
@@ -161,3 +247,14 @@
     ];
   }
 </script>
+
+<style lang="less" scoped>
+  .agent-context {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 8px;
+    color: rgba(0, 0, 0, 0.65);
+  }
+</style>

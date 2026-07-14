@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'jeecg-boot/**'
+      - 'jeecgboot-vue3/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
@@ -22,6 +23,8 @@ env:
   REMOTE_HOST: ${{ secrets.TENCENT_HOST }}
   PROJECT_DIR: jeecg-boot
   MODULE_PATH: jeecg-boot/jeecg-module-system/jeecg-system-start
+  FRONTEND_DIR: jeecgboot-vue3
+  FRONTEND_ROOT: /var/wwwroot/cit/dist
 
 jobs:
   # 阶段 1：编译 jar，作为 artifact 传给下一个 job
@@ -41,6 +44,31 @@ jobs:
           java-version: 17
           cache: maven
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: ${{ env.FRONTEND_DIR }}/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Test custom frontend workflow
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: pnpm exec jest tests/unit/custom --runInBand --env=node
+
+      - name: Build frontend
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: pnpm build
+
+      - name: Package frontend artifact
+        run: tar -C ${{ env.FRONTEND_DIR }}/dist -czf frontend-dist.tar.gz .
+
       - name: Build jar (jeecg-system-start + 依赖模块)
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -53,6 +81,14 @@ jobs:
         with:
           name: app-jar
           path: ${{ env.MODULE_PATH }}/target/jeecg-system-start-*.jar
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend-dist.tar.gz
           retention-days: 1
           if-no-files-found: error
 
@@ -90,6 +126,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, push]
     steps:
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: deploy-artifacts
+
+      - name: Upload frontend artifact to production
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ env.REMOTE_HOST }}
+          username: ${{ env.REMOTE_USER }}
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          source: deploy-artifacts/frontend-dist.tar.gz
+          target: /tmp/cit-frontend-${{ needs.build.outputs.short_sha }}
+          strip_components: 1
+
       - name: Deploy ${{ env.IMAGE_NAME }}
         uses: appleboy/ssh-action@v1
         env:
@@ -166,6 +218,57 @@ jobs:
               fi
               exit 1
             fi
+
+            # 当前 smart-entry.citclub.org 由宿主机 Nginx 从该目录提供静态资源。
+            FRONTEND_ARCHIVE=/tmp/cit-frontend-${{ needs.build.outputs.short_sha }}/frontend-dist.tar.gz
+            FRONTEND_ROOT=${{ env.FRONTEND_ROOT }}
+            FRONTEND_PARENT=$(dirname "$FRONTEND_ROOT")
+            FRONTEND_STAGE=${FRONTEND_PARENT}/.dist-${{ needs.build.outputs.short_sha }}
+            FRONTEND_BACKUP=${FRONTEND_PARENT}/.dist-backup
+
+            rollback_release() {
+              echo "Restoring previous frontend and backend release..."
+              rm -rf "$FRONTEND_ROOT"
+              if [ -e "$FRONTEND_BACKUP" ] || [ -L "$FRONTEND_BACKUP" ]; then
+                mv "$FRONTEND_BACKUP" "$FRONTEND_ROOT"
+                nginx -t && systemctl reload nginx || true
+              fi
+              if [ -n "$OLD_IMAGE" ]; then
+                run_container "$OLD_IMAGE"
+              fi
+            }
+
+            rm -rf "$FRONTEND_STAGE" "$FRONTEND_BACKUP"
+            mkdir -p "$FRONTEND_STAGE"
+            tar -xzf "$FRONTEND_ARCHIVE" -C "$FRONTEND_STAGE"
+            if [ ! -s "$FRONTEND_STAGE/index.html" ]; then
+              echo "Frontend artifact is missing index.html"
+              rm -rf "$FRONTEND_STAGE"
+              exit 1
+            fi
+
+            if [ -e "$FRONTEND_ROOT" ] || [ -L "$FRONTEND_ROOT" ]; then
+              mv "$FRONTEND_ROOT" "$FRONTEND_BACKUP"
+            fi
+            mv "$FRONTEND_STAGE" "$FRONTEND_ROOT"
+
+            if ! nginx -t || ! systemctl reload nginx; then
+              echo "Frontend deploy failed, restoring previous assets..."
+              rollback_release
+              exit 1
+            fi
+
+            FRONTEND_HEALTH_BODY=$(mktemp)
+            if ! curl -fkSs https://127.0.0.1/ -H 'Host: smart-entry.citclub.org' --max-time 20 -o "$FRONTEND_HEALTH_BODY" \
+              || ! grep -q 'id="app"' "$FRONTEND_HEALTH_BODY"; then
+              echo "Frontend health check failed"
+              rm -f "$FRONTEND_HEALTH_BODY"
+              rollback_release
+              exit 1
+            fi
+            rm -f "$FRONTEND_HEALTH_BODY"
+
+            rm -rf /tmp/cit-frontend-${{ needs.build.outputs.short_sha }}
 
             echo "Deploy success"
             docker image prune -f || true

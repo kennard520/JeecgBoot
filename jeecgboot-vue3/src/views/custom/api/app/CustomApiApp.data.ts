@@ -1,5 +1,5 @@
 import { BasicColumn, FormSchema } from '/@/components/Table';
-import { checkAppKey } from './CustomApiApp.api';
+import { checkAppKey, listEnabledAgents } from './CustomApiApp.api';
 
 const enabledOptions = [
   { label: '启用', value: '1' },
@@ -19,9 +19,22 @@ export const columns: BasicColumn[] = [
     width: 120,
   },
   {
-    title: '解析路由',
-    dataIndex: 'companyCode',
-    width: 120,
+    title: '可用智能体',
+    dataIndex: 'allowedAgentCodes',
+    width: 220,
+    ellipsis: true,
+    customRender({ text, record }) {
+      const value = text || record.agentCodes || record.companyCode;
+      return Array.isArray(value) ? value.join('、') : `${value || '-'}`.replaceAll(',', '、');
+    },
+  },
+  {
+    title: '默认智能体',
+    dataIndex: 'defaultAgentCode',
+    width: 140,
+    customRender({ text, record }) {
+      return text || record.companyCode || '-';
+    },
   },
   {
     title: '状态',
@@ -78,7 +91,7 @@ export const searchFormSchema: FormSchema[] = [
     colProps: { span: 6 },
   },
   {
-    label: '解析路由',
+    label: '智能体',
     field: 'companyCode',
     component: 'Input',
     colProps: { span: 6 },
@@ -107,7 +120,7 @@ export const formSchema: FormSchema[] = [
     component: 'Input',
     required: true,
     dynamicDisabled: ({ values }) => !!values.id,
-    dynamicRules: ({ values, model }) => {
+    dynamicRules: ({ model }) => {
       return [
         {
           required: true,
@@ -135,12 +148,54 @@ export const formSchema: FormSchema[] = [
     },
   },
   {
-    field: 'companyCode',
-    label: '解析路由',
-    component: 'Input',
+    field: 'allowedAgentCodes',
+    label: '可用智能体',
+    component: 'ApiSelect',
     required: true,
-    defaultValue: 'CUSTOMS',
-    helpMessage: 'RabbitMQ 路由键。通用解析填 CUSTOMS，独立 worker 填对应 companyCode。',
+    componentProps: {
+      api: listEnabledAgents,
+      mode: 'multiple',
+      labelField: 'agentName',
+      valueField: 'agentCode',
+      optionFilterProp: 'label',
+      placeholder: '请选择可用智能体',
+    },
+  },
+  {
+    field: 'defaultAgentCode',
+    label: '默认智能体',
+    component: 'ApiSelect',
+    required: true,
+    componentProps: {
+      api: listEnabledAgents,
+      labelField: 'agentName',
+      valueField: 'agentCode',
+      optionFilterProp: 'label',
+      placeholder: '请选择默认智能体',
+    },
+    dynamicRules: ({ model }) => [
+      {
+        required: true,
+        validator: async (_, value) => {
+          if (!value) {
+            return Promise.reject('请选择默认智能体');
+          }
+          const allowed = Array.isArray(model.allowedAgentCodes)
+            ? model.allowedAgentCodes
+            : `${model.allowedAgentCodes || ''}`.split(',').filter(Boolean);
+          if (!allowed.includes(value)) {
+            return Promise.reject('默认智能体必须包含在可用智能体中');
+          }
+          return Promise.resolve();
+        },
+      },
+    ],
+  },
+  {
+    field: 'companyCode',
+    label: '',
+    component: 'Input',
+    show: false,
   },
   {
     field: 'rateLimit',

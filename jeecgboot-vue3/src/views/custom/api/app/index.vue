@@ -26,12 +26,7 @@
     <CustomApiAppDrawer @register="registerDrawer" @success="handleDrawerSuccess" />
 
     <a-modal v-model:open="secretVisible" title="请保存 AppSecret" width="640px" :footer="null">
-      <a-alert
-        type="warning"
-        showIcon
-        message="AppSecret 只在新增或重置时显示一次，关闭后无法再次查看。"
-        class="mb-4"
-      />
+      <a-alert type="warning" showIcon message="AppSecret 只在新增或重置时显示一次，关闭后无法再次查看。" class="mb-4" />
       <a-descriptions bordered size="small" :column="1">
         <a-descriptions-item label="AppKey">{{ secretPayload.appKey }}</a-descriptions-item>
         <a-descriptions-item label="AppSecret">
@@ -57,6 +52,9 @@
   import CustomApiAppDrawer from './components/CustomApiAppDrawer.vue';
   import { batchDelete, clearAccessToken, deleteOne, list, resetSecret, saveOrUpdate } from './CustomApiApp.api';
   import { columns, searchFormSchema } from './CustomApiApp.data';
+  import { normalizeApiAppAgentFields } from './apiAppAgentModel';
+
+  defineOptions({ name: 'CustomApiApp' });
 
   const { createMessage } = useMessage();
   const [registerDrawer, { openDrawer }] = useDrawer();
@@ -110,12 +108,13 @@
   }
 
   async function handleToggleEnabled(record) {
+    const agentFields = normalizeApiAppAgentFields(record);
     await saveOrUpdate(
       {
         id: record.id,
         appKey: record.appKey,
         customerCode: record.customerCode,
-        companyCode: record.companyCode,
+        ...agentFields,
         rateLimit: record.rateLimit,
         enabled: `${record.enabled}` === '1' ? 0 : 1,
       },
