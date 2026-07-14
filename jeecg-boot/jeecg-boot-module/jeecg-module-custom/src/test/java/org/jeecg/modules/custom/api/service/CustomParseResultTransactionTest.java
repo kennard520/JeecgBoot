@@ -20,6 +20,9 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -31,6 +34,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -45,6 +49,24 @@ class CustomParseResultTransactionTest {
 
         verify(fixture.taskMapper, never()).selectByTaskIdForUpdate(any());
         verify(fixture.decHeadService, never()).save(any());
+    }
+
+    @Test
+    void sameResultEventWithDifferentJsonKeyOrderUsesSameInboxFingerprint() throws Exception {
+        Fixture fixture = fixture(task(1));
+        when(fixture.inbox.receive(any(), any(), any(Integer.class), any(), any()))
+                .thenReturn(null);
+        Map<String, Object> original = succeeded(1);
+        Map<String, Object> reordered = reverseEntries(original);
+
+        fixture.service.handleParseResult(original);
+        fixture.service.handleParseResult(reordered);
+
+        ArgumentCaptor<String> hashes = ArgumentCaptor.forClass(String.class);
+        verify(fixture.inbox, times(2)).receive(
+                any(), any(), any(Integer.class), any(), hashes.capture());
+        assertThat(hashes.getAllValues()).hasSize(2);
+        assertThat(hashes.getAllValues().get(0)).isEqualTo(hashes.getAllValues().get(1));
     }
 
     @Test
@@ -239,6 +261,14 @@ class CustomParseResultTransactionTest {
                 Map.entry("stage", "extracting"),
                 Map.entry("progress", 35),
                 Map.entry("occurredAt", "2026-07-14T12:00:00Z"));
+    }
+
+    private Map<String, Object> reverseEntries(Map<String, Object> source) {
+        List<Map.Entry<String, Object>> entries = new ArrayList<>(source.entrySet());
+        Collections.reverse(entries);
+        Map<String, Object> reordered = new LinkedHashMap<>();
+        entries.forEach(entry -> reordered.put(entry.getKey(), entry.getValue()));
+        return reordered;
     }
 
     private void setField(Object target, String name, Object value) throws Exception {
