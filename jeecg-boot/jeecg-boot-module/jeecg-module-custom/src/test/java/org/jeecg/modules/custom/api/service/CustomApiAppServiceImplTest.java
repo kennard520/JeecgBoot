@@ -1,8 +1,10 @@
 package org.jeecg.modules.custom.api.service;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.ai.service.CustomAgentAccessService;
 import org.jeecg.modules.custom.api.exception.CustomApiRateLimitException;
+import org.jeecg.modules.custom.api.exception.CustomApiUnauthorizedException;
 import org.jeecg.modules.custom.api.service.impl.CustomApiAppServiceImpl;
 import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.vo.AuthTokenRequest;
@@ -25,6 +27,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class CustomApiAppServiceImplTest {
+
+    @Test
+    void missingApiTokenUsesUnauthorizedApiException() {
+        CustomApiAppServiceImpl service = new CustomApiAppServiceImpl();
+        HttpServletRequest request = mock(HttpServletRequest.class);
+
+        assertThatThrownBy(() -> service.requireApp(request))
+                .isInstanceOf(CustomApiUnauthorizedException.class)
+                .hasMessage("missing X-Custom-Api-Token");
+    }
 
     @Test
     void createsAppAndAgentGrantsAtomicallyThroughOneServiceCall() throws Exception {
@@ -74,6 +86,26 @@ class CustomApiAppServiceImplTest {
                 .satisfies(error -> org.assertj.core.api.Assertions.assertThat(
                         ((CustomApiRateLimitException) error).getRetryAfterSeconds()).isEqualTo(3));
         verify(rateLimiter).check(app, "token");
+    }
+
+    @Test
+    void invalidAppSecretUsesUnauthorizedApiException() throws Exception {
+        CustomApiRateLimiter rateLimiter = mock(CustomApiRateLimiter.class);
+        CustomApiAppServiceImpl service = spy(new CustomApiAppServiceImpl());
+        setField(service, "rateLimiter", rateLimiter);
+        CustomApiApp app = new CustomApiApp()
+                .setId(9L)
+                .setAppKey("client-a")
+                .setAppSecretHash(CustomApiCrypto.sha256("correct-secret"))
+                .setEnabled(1);
+        doReturn(app).when(service).getOne(any(), eq(false));
+        AuthTokenRequest request = new AuthTokenRequest();
+        request.setAppKey("client-a");
+        request.setAppSecret("wrong-secret");
+
+        assertThatThrownBy(() -> service.issueToken(request))
+                .isInstanceOf(CustomApiUnauthorizedException.class)
+                .hasMessage("invalid app secret");
     }
 
     @Test

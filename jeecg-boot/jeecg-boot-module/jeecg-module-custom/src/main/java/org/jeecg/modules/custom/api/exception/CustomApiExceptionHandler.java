@@ -13,6 +13,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class CustomApiExceptionHandler {
 
+    @ExceptionHandler(CustomApiUnauthorizedException.class)
+    public ResponseEntity<Result<?>> unauthorized(CustomApiUnauthorizedException error) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Result.error(HttpStatus.UNAUTHORIZED.value(), error.getMessage()));
+    }
+
     @ExceptionHandler(CustomApiNotFoundException.class)
     public ResponseEntity<Result<?>> notFound(CustomApiNotFoundException error) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)

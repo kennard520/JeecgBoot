@@ -31,4 +31,17 @@ class CustomApiExceptionHandlerTest {
         assertThat(response.getBody().getCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
         assertThat(response.getBody().getMessage()).isEqualTo("task not found");
     }
+
+    @Test
+    void missingApiCredentialReturnsHttp401() {
+        CustomApiExceptionHandler handler = new CustomApiExceptionHandler();
+
+        ResponseEntity<Result<?>> response = handler.unauthorized(
+                new CustomApiUnauthorizedException("missing X-Custom-Api-Token"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+        assertThat(response.getBody().getMessage()).isEqualTo("missing X-Custom-Api-Token");
+    }
 }

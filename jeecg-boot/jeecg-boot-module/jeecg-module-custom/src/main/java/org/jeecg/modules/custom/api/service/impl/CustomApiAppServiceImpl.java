@@ -7,6 +7,7 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.ai.service.CustomAgentAccessService;
 import org.jeecg.modules.custom.ai.vo.ApiAppAgentGrantRequest;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
+import org.jeecg.modules.custom.api.exception.CustomApiUnauthorizedException;
 import org.jeecg.modules.custom.api.mapper.CustomApiAppMapper;
 import org.jeecg.modules.custom.api.service.ICustomApiAppService;
 import org.jeecg.modules.custom.api.service.CustomApiRateLimiter;
@@ -154,11 +155,11 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
         }
         CustomApiApp app = getOne(new LambdaQueryWrapper<CustomApiApp>().eq(CustomApiApp::getAppKey, request.getAppKey()), false);
         if (app == null || !app.isApiEnabled()) {
-            throw new JeecgBootException("app is disabled or not found");
+            throw new CustomApiUnauthorizedException("app is disabled or not found");
         }
         rateLimiter.check(app, "token");
         if (!CustomApiCrypto.equalsHash(request.getAppSecret(), app.getAppSecretHash())) {
-            throw new JeecgBootException("invalid app secret");
+            throw new CustomApiUnauthorizedException("invalid app secret");
         }
 
         String token = CustomApiCrypto.randomToken("cai_", 32);
@@ -183,15 +184,15 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
             }
         }
         if (isBlank(token)) {
-            throw new JeecgBootException("missing X-Custom-Api-Token");
+            throw new CustomApiUnauthorizedException("missing X-Custom-Api-Token");
         }
         CustomApiApp app = getOne(new LambdaQueryWrapper<CustomApiApp>()
                 .eq(CustomApiApp::getAccessTokenHash, CustomApiCrypto.sha256(token)), false);
         if (app == null || !app.isApiEnabled()) {
-            throw new JeecgBootException("invalid access token");
+            throw new CustomApiUnauthorizedException("invalid access token");
         }
         if (app.getTokenExpireAt() == null || app.getTokenExpireAt().isBefore(LocalDateTime.now())) {
-            throw new JeecgBootException("access token expired");
+            throw new CustomApiUnauthorizedException("access token expired");
         }
         return app;
     }
