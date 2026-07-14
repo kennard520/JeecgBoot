@@ -29,9 +29,18 @@ describe('frontend deployment workflow', () => {
 
     const rollbackFunction = workflow.slice(workflow.indexOf('rollback_release()'), workflow.indexOf('rm -rf "$FRONTEND_STAGE"'));
     expect(rollbackFunction).toContain('mv "$FRONTEND_BACKUP" "$FRONTEND_ROOT"');
-    expect(rollbackFunction).toContain('run_container "$OLD_IMAGE"');
+    expect(rollbackFunction).toContain('rollback_backend');
+    const backendRollbackFunction = workflow.slice(workflow.indexOf('rollback_backend()'), workflow.indexOf('rollback_release()'));
+    expect(backendRollbackFunction).toContain('run_container "$OLD_IMAGE"');
 
     const failureBranch = workflow.slice(workflow.indexOf('Frontend health check failed'), workflow.indexOf('echo "Deploy success"'));
     expect(failureBranch).toContain('rollback_release');
+
+    const invalidArtifactBranch = workflow.slice(
+      workflow.indexOf('Frontend artifact extraction failed'),
+      workflow.indexOf('if [ -e "$FRONTEND_ROOT"')
+    );
+    expect(invalidArtifactBranch).toContain('rollback_backend');
+    expect(invalidArtifactBranch).toContain('Frontend artifact is missing index.html');
   });
 });

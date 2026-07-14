@@ -226,6 +226,12 @@ jobs:
             FRONTEND_STAGE=${FRONTEND_PARENT}/.dist-${{ needs.build.outputs.short_sha }}
             FRONTEND_BACKUP=${FRONTEND_PARENT}/.dist-backup
 
+            rollback_backend() {
+              if [ -n "$OLD_IMAGE" ]; then
+                run_container "$OLD_IMAGE"
+              fi
+            }
+
             rollback_release() {
               echo "Restoring previous frontend and backend release..."
               rm -rf "$FRONTEND_ROOT"
@@ -233,17 +239,21 @@ jobs:
                 mv "$FRONTEND_BACKUP" "$FRONTEND_ROOT"
                 nginx -t && systemctl reload nginx || true
               fi
-              if [ -n "$OLD_IMAGE" ]; then
-                run_container "$OLD_IMAGE"
-              fi
+              rollback_backend
             }
 
             rm -rf "$FRONTEND_STAGE" "$FRONTEND_BACKUP"
             mkdir -p "$FRONTEND_STAGE"
-            tar -xzf "$FRONTEND_ARCHIVE" -C "$FRONTEND_STAGE"
+            if ! tar -xzf "$FRONTEND_ARCHIVE" -C "$FRONTEND_STAGE"; then
+              echo "Frontend artifact extraction failed"
+              rm -rf "$FRONTEND_STAGE"
+              rollback_backend
+              exit 1
+            fi
             if [ ! -s "$FRONTEND_STAGE/index.html" ]; then
               echo "Frontend artifact is missing index.html"
               rm -rf "$FRONTEND_STAGE"
+              rollback_backend
               exit 1
             fi
 

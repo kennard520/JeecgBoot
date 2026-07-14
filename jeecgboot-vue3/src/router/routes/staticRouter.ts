@@ -53,6 +53,14 @@ export const CUSTOM_CIT_ROUTE: AppRouteRecordRaw = {
         title: 'API客户管理',
       },
     },
+    {
+      path: 'ai/grant',
+      name: 'CustomAiAgentGrant',
+      component: () => import('/@/views/custom/ai/grant/index.vue'),
+      meta: {
+        title: '智能体授权',
+      },
+    },
   ],
 };
 
