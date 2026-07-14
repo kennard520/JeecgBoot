@@ -9,4 +9,5 @@ public class FileUploadUrlRequest {
     private Long fileSize;
     private String sha256;
     private String clientFileId;
+    private String idempotencyKey;
 }

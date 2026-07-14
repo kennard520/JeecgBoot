@@ -30,6 +30,9 @@ public class CustomApiFile implements Serializable {
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
+    @TableField("app_id")
+    private Long appId;
+
     @TableField("file_id")
     private String fileId;
 
@@ -38,6 +41,12 @@ public class CustomApiFile implements Serializable {
 
     @TableField("client_file_id")
     private String clientFileId;
+
+    @TableField("idempotency_key")
+    private String idempotencyKey;
+
+    @TableField("request_hash")
+    private String requestHash;
 
     @TableField("original_filename")
     private String originalFilename;
@@ -50,6 +59,15 @@ public class CustomApiFile implements Serializable {
 
     @TableField("sha256")
     private String sha256;
+
+    @TableField("actual_file_size")
+    private Long actualFileSize;
+
+    @TableField("actual_sha256")
+    private String actualSha256;
+
+    @TableField("verified_at")
+    private LocalDateTime verifiedAt;
 
     @TableField("storage_type")
     private String storageType;

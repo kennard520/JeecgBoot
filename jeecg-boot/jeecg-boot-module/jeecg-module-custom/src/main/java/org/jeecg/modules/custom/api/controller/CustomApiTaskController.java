@@ -8,6 +8,7 @@ import org.jeecg.config.shiro.IgnoreAuth;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.service.ICustomApiAppService;
 import org.jeecg.modules.custom.api.service.ICustomApiTaskService;
+import org.jeecg.modules.custom.api.service.CustomApiRateLimiter;
 import org.jeecg.modules.custom.api.vo.TaskCreateRequest;
 import org.jeecg.modules.custom.api.vo.TaskResponse;
 import org.jeecg.modules.custom.api.vo.TaskResultResponse;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "Customs AI external tasks")
@@ -28,13 +30,19 @@ public class CustomApiTaskController {
     private ICustomApiAppService appService;
     @Autowired
     private ICustomApiTaskService taskService;
+    @Autowired
+    private CustomApiRateLimiter rateLimiter;
 
     @IgnoreAuth
     @Operation(summary = "Create parse task")
     @PostMapping
-    public Result<TaskResponse> create(@RequestBody TaskCreateRequest request, HttpServletRequest servletRequest) {
+    public Result<TaskResponse> create(
+            @RequestBody TaskCreateRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            HttpServletRequest servletRequest) {
         CustomApiApp app = appService.requireApp(servletRequest);
-        return Result.OK(taskService.createTask(app, request));
+        rateLimiter.check(app, "task-create");
+        return Result.OK(taskService.createTask(app, request, idempotencyKey));
     }
 
     @IgnoreAuth
@@ -42,6 +50,7 @@ public class CustomApiTaskController {
     @GetMapping("/{taskId}")
     public Result<TaskResponse> get(@PathVariable String taskId, HttpServletRequest servletRequest) {
         CustomApiApp app = appService.requireApp(servletRequest);
+        rateLimiter.check(app, "poll");
         return Result.OK(taskService.getTask(app, taskId));
     }
 
@@ -50,6 +59,7 @@ public class CustomApiTaskController {
     @GetMapping("/{taskId}/result")
     public Result<TaskResultResponse> result(@PathVariable String taskId, HttpServletRequest servletRequest) {
         CustomApiApp app = appService.requireApp(servletRequest);
+        rateLimiter.check(app, "poll");
         return Result.OK(taskService.getResult(app, taskId));
     }
 }

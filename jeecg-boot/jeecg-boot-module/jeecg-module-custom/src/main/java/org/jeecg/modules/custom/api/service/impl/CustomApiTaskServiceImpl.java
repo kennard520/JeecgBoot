@@ -23,6 +23,8 @@ import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.jeecg.modules.custom.api.mq.CustomApiTaskMqProducer;
 import org.jeecg.modules.custom.api.service.ICustomApiFileService;
 import org.jeecg.modules.custom.api.service.ICustomApiTaskService;
+import org.jeecg.modules.custom.api.service.CustomApiIdempotencyService;
+import org.jeecg.modules.custom.api.util.CanonicalRequestHasher;
 import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.util.CustomApiIds;
 import org.jeecg.modules.custom.api.vo.TaskCreateRequest;
@@ -34,6 +36,7 @@ import org.jeecg.modules.custom.cit.service.IDecHeadService;
 import org.jeecg.modules.custom.cit.service.IDecListService;
 import org.jeecg.modules.custom.task.entity.Document;
 import org.jeecg.modules.custom.task.service.IDocumentService;
+import org.jeecg.modules.custom.ai.service.CustomAgentAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -86,6 +89,12 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
     private IDecListService decListService;
     @Autowired
     private DataSource dataSource;
+    @Autowired
+    private CustomAgentAccessService agentAccessService;
+    @Autowired
+    private CustomApiIdempotencyService idempotencyService;
+    @Autowired
+    private CanonicalRequestHasher requestHasher;
 
     public CustomApiTaskServiceImpl() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -96,8 +105,26 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
 
     @Override
     public TaskResponse createTask(CustomApiApp app, TaskCreateRequest request) {
+        String idempotencyKey = request == null ? null : request.getIdempotencyKey();
+        return createTask(app, request, idempotencyKey);
+    }
+
+    @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class)
+    public TaskResponse createTask(CustomApiApp app, TaskCreateRequest request, String headerIdempotencyKey) {
         if (request == null || isBlank(request.getFileId())) {
             throw new JeecgBootException("fileId is required");
+        }
+        if (app == null || app.getId() == null) {
+            throw new JeecgBootException("authenticated API app is required");
+        }
+        String agentCode = agentAccessService.requireApiAgent(app, request.getCompanyCode());
+        String idempotencyKey = firstNonBlank(headerIdempotencyKey, request.getIdempotencyKey());
+        String requestHash = requestHasher.hashTask(request, agentCode);
+        CustomApiTask existing = idempotencyService.findTask(
+                app.getId(), request.getClientTaskId(), idempotencyKey, requestHash);
+        if (existing != null) {
+            return toResponse(existing);
         }
         CustomApiFile file = fileService.requireUploadedFile(app, request.getFileId());
 
@@ -117,19 +144,24 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         documentService.save(document);
 
         CustomApiTask task = new CustomApiTask()
+                .setAppId(app.getId())
                 .setTaskId(taskId)
                 .setFileId(file.getFileId())
                 .setCustomerCode(app.getCustomerCode())
                 .setClientTaskId(request.getClientTaskId())
+                .setIdempotencyKey(isBlank(idempotencyKey) ? null : idempotencyKey.trim())
+                .setRequestHash(requestHash)
                 .setDocumentId(document.getId())
                 .setDirection(direction)
-                .setCompanyCode(isBlank(request.getCompanyCode()) ? app.getCompanyCode() : request.getCompanyCode())
+                .setCompanyCode(agentCode)
                 .setCallbackUrl(request.getCallbackUrl())
                 .setCallbackSecret(request.getCallbackSecret())
                 .setResponseMode(responseMode)
                 .setStatus(CustomApiTask.STATUS_QUEUED)
                 .setStage("queued")
                 .setProgress(0)
+                .setCustomsAiRunNo(1)
+                .setVersion(0)
                 .setMetadataJson(request.getMetadata() == null ? null : JSON.toJSONString(request.getMetadata()))
                 .setCreatedAt(LocalDateTime.now());
         save(task);
@@ -354,6 +386,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         }
         CustomApiTask task = getOne(new LambdaQueryWrapper<CustomApiTask>()
                 .eq(CustomApiTask::getTaskId, taskId)
+                .eq(CustomApiTask::getAppId, app.getId())
                 .eq(CustomApiTask::getCustomerCode, app.getCustomerCode()), false);
         if (task == null) {
             throw new JeecgBootException("task not found");

@@ -13,6 +13,9 @@ import org.springframework.web.multipart.MultipartFile;
 public interface ICustomApiFileService extends IService<CustomApiFile> {
     FileUploadUrlResponse createUploadUrl(CustomApiApp app, FileUploadUrlRequest request, HttpServletRequest servletRequest);
 
+    FileUploadUrlResponse createUploadUrl(CustomApiApp app, FileUploadUrlRequest request,
+                                          HttpServletRequest servletRequest, String idempotencyKey);
+
     FileInfoResponse complete(CustomApiApp app, String fileId, FileCompleteRequest request);
 
     void uploadLocalContent(String fileId, String uploadToken, MultipartFile file);

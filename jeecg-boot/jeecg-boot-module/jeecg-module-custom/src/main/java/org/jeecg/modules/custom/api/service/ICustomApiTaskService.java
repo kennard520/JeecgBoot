@@ -12,6 +12,8 @@ import java.util.Map;
 public interface ICustomApiTaskService extends IService<CustomApiTask> {
     TaskResponse createTask(CustomApiApp app, TaskCreateRequest request);
 
+    TaskResponse createTask(CustomApiApp app, TaskCreateRequest request, String idempotencyKey);
+
     TaskResponse getTask(CustomApiApp app, String taskId);
 
     TaskResultResponse getResult(CustomApiApp app, String taskId);

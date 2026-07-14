@@ -7,15 +7,18 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.mapper.CustomApiFileMapper;
+import org.jeecg.modules.custom.api.service.CustomApiIdempotencyService;
 import org.jeecg.modules.custom.api.service.ICustomApiFileService;
 import org.jeecg.modules.custom.api.storage.ObjectStorageService;
+import org.jeecg.modules.custom.api.util.CanonicalRequestHasher;
 import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.util.CustomApiIds;
+import org.jeecg.modules.custom.api.validation.UploadedFileVerifier;
+import org.jeecg.modules.custom.api.validation.VerifiedFile;
 import org.jeecg.modules.custom.api.vo.FileCompleteRequest;
 import org.jeecg.modules.custom.api.vo.FileInfoResponse;
 import org.jeecg.modules.custom.api.vo.FileUploadUrlRequest;
 import org.jeecg.modules.custom.api.vo.FileUploadUrlResponse;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,19 +30,59 @@ import java.time.LocalDateTime;
 @Service
 public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, CustomApiFile> implements ICustomApiFileService {
 
-    @Autowired
-    private ObjectStorageService objectStorageService;
+    private final ObjectStorageService objectStorageService;
+    private final UploadedFileVerifier uploadedFileVerifier;
+    private final CustomApiIdempotencyService idempotencyService;
+    private final CanonicalRequestHasher requestHasher;
 
     @Value("${custom.api.upload-url-ttl-seconds:900}")
-    private Long uploadUrlTtlSeconds;
+    private Long uploadUrlTtlSeconds = 900L;
+
+    @Value("${custom.api.file.max-upload-bytes:104857600}")
+    private Long maxUploadBytes = 104857600L;
+
+    public CustomApiFileServiceImpl(ObjectStorageService objectStorageService,
+                                    UploadedFileVerifier uploadedFileVerifier,
+                                    CustomApiIdempotencyService idempotencyService,
+                                    CanonicalRequestHasher requestHasher) {
+        this.objectStorageService = objectStorageService;
+        this.uploadedFileVerifier = uploadedFileVerifier;
+        this.idempotencyService = idempotencyService;
+        this.requestHasher = requestHasher;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public FileUploadUrlResponse createUploadUrl(CustomApiApp app, FileUploadUrlRequest request, HttpServletRequest servletRequest) {
+        String idempotencyKey = request == null ? null : request.getIdempotencyKey();
+        return createUploadUrl(app, request, servletRequest, idempotencyKey);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public FileUploadUrlResponse createUploadUrl(CustomApiApp app, FileUploadUrlRequest request,
+                                                 HttpServletRequest servletRequest, String headerIdempotencyKey) {
         if (request == null || isBlank(request.getFilename())) {
             throw new JeecgBootException("filename is required");
         }
+        if (app == null || app.getId() == null) {
+            throw new JeecgBootException("authenticated API app is required");
+        }
         validateFileName(request.getFilename());
+        if (request.getFileSize() != null && (request.getFileSize() <= 0 || request.getFileSize() > maxUploadBytes)) {
+            throw new JeecgBootException("fileSize must be between 1 and " + maxUploadBytes);
+        }
+        if (!isBlank(request.getSha256()) && !request.getSha256().matches("(?i)^[0-9a-f]{64}$")) {
+            throw new JeecgBootException("sha256 must be 64 hexadecimal characters");
+        }
+
+        String idempotencyKey = firstNonBlank(headerIdempotencyKey, request.getIdempotencyKey());
+        String requestHash = requestHasher.hashFile(request);
+        CustomApiFile existing = idempotencyService.findFile(
+                app.getId(), request.getClientFileId(), idempotencyKey, requestHash);
+        if (existing != null) {
+            return existingUploadResponse(existing, servletRequest);
+        }
 
         String fileId = CustomApiIds.fileId();
         String safeFilename = CustomApiIds.safeFilename(request.getFilename());
@@ -49,9 +92,12 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
         String uploadToken = CustomApiCrypto.randomToken("upl_", 24);
 
         CustomApiFile file = new CustomApiFile()
+                .setAppId(app.getId())
                 .setFileId(fileId)
                 .setCustomerCode(app.getCustomerCode())
                 .setClientFileId(request.getClientFileId())
+                .setIdempotencyKey(trimToNull(idempotencyKey))
+                .setRequestHash(requestHash)
                 .setOriginalFilename(safeFilename)
                 .setContentType(isBlank(request.getContentType()) ? "application/octet-stream" : request.getContentType())
                 .setFileSize(request.getFileSize())
@@ -80,13 +126,15 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
             throw new JeecgBootException("upload url expired");
         }
         if (request != null) {
-            if (request.getFileSize() != null) {
-                file.setFileSize(request.getFileSize());
-            }
-            if (!isBlank(request.getSha256())) {
-                file.setSha256(request.getSha256());
-            }
+            // Client completion metadata is intentionally ignored. The object is verified below.
         }
+        VerifiedFile verified = uploadedFileVerifier.verify(file);
+        file.setFileSize(verified.actualFileSize());
+        file.setSha256(verified.actualSha256());
+        file.setActualFileSize(verified.actualFileSize());
+        file.setActualSha256(verified.actualSha256());
+        file.setVerifiedAt(LocalDateTime.now());
+        file.setContentType(verified.detectedType());
         file.setStatus(CustomApiFile.STATUS_UPLOADED);
         file.setUploadedAt(LocalDateTime.now());
         updateById(file);
@@ -127,6 +175,7 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
         }
         CustomApiFile file = getOne(new LambdaQueryWrapper<CustomApiFile>()
                 .eq(CustomApiFile::getFileId, fileId)
+                .eq(CustomApiFile::getAppId, app.getId())
                 .eq(CustomApiFile::getCustomerCode, app.getCustomerCode()), false);
         if (file == null) {
             throw new JeecgBootException("file not found");
@@ -147,6 +196,34 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
         if (!(lower.endsWith(".zip") || lower.endsWith(".rar") || lower.endsWith(".pdf"))) {
             throw new JeecgBootException("only .zip, .rar, .pdf are supported");
         }
+    }
+
+    private FileUploadUrlResponse existingUploadResponse(CustomApiFile file, HttpServletRequest request) {
+        if (CustomApiFile.STATUS_UPLOADED.equals(file.getStatus())) {
+            return new FileUploadUrlResponse()
+                    .setFileId(file.getFileId())
+                    .setStorageType(file.getStorageType())
+                    .setObjectKey(file.getObjectKey())
+                    .setExpiresAt(file.getExpiresAt());
+        }
+        String uploadToken = CustomApiCrypto.randomToken("upl_", 24);
+        file.setUploadTokenHash(CustomApiCrypto.sha256(uploadToken));
+        file.setExpiresAt(LocalDateTime.now().plusSeconds(uploadUrlTtlSeconds));
+        updateById(file);
+        return objectStorageService.createUploadUrl(file, uploadToken, request);
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (!isBlank(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String trimToNull(String value) {
+        return isBlank(value) ? null : value.trim();
     }
 
     private boolean isBlank(String value) {

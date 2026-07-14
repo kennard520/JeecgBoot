@@ -6,6 +6,8 @@ import org.jeecg.modules.custom.api.vo.FileDownloadInfo;
 import org.jeecg.modules.custom.api.vo.FileUploadUrlResponse;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 
@@ -15,6 +17,8 @@ public interface ObjectStorageService {
     FileDownloadInfo createDownloadUrl(CustomApiFile file, LocalDateTime expiresAt);
 
     void saveLocalUpload(CustomApiFile file, MultipartFile upload);
+
+    InputStream openStream(CustomApiFile file) throws IOException;
 
     Path downloadToLocal(CustomApiFile file, Path workDir);
 }

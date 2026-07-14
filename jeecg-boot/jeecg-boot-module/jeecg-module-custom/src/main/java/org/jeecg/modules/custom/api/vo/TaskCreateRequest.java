@@ -8,6 +8,7 @@ import java.util.Map;
 public class TaskCreateRequest {
     private String fileId;
     private String clientTaskId;
+    private String idempotencyKey;
     private String direction;
     private String callbackUrl;
     private String callbackSecret;

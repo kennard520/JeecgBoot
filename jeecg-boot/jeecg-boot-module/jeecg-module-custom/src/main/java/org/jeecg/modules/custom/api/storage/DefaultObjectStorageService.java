@@ -25,6 +25,8 @@ import org.springframework.util.FileCopyUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -120,13 +122,53 @@ public class DefaultObjectStorageService implements ObjectStorageService {
             Path target = dir.resolve(file.getOriginalFilename());
             FileCopyUtils.copy(upload.getBytes(), target.toFile());
             file.setStoragePath(target.toAbsolutePath().toString());
-            file.setFileSize(upload.getSize());
             if (upload.getContentType() != null) {
                 file.setContentType(upload.getContentType());
             }
         } catch (Exception e) {
             throw new JeecgBootException("save local upload failed: " + e.getMessage());
         }
+    }
+
+    @Override
+    public InputStream openStream(CustomApiFile file) throws IOException {
+        if (CommonConstant.UPLOAD_TYPE_LOCAL.equals(file.getStorageType())) {
+            if (file.getStoragePath() == null || file.getStoragePath().isBlank()) {
+                throw new JeecgBootException("local upload path is missing");
+            }
+            Path source = Path.of(file.getStoragePath());
+            if (!Files.isRegularFile(source)) {
+                throw new JeecgBootException("local upload file not found");
+            }
+            return Files.newInputStream(source);
+        }
+        if (CommonConstant.UPLOAD_TYPE_OSS.equals(file.getStorageType())) {
+            InputStream input = OssBootUtil.getOssFile(file.getObjectKey(), file.getBucket());
+            if (input == null) {
+                throw new JeecgBootException("OSS object not found");
+            }
+            return input;
+        }
+        if (isTencentCos(file.getStorageType())) {
+            COSClient client = createCosClient();
+            try {
+                COSObject object = client.getObject(file.getBucket(), file.getObjectKey());
+                return new FilterInputStream(object.getObjectContent()) {
+                    @Override
+                    public void close() throws IOException {
+                        try {
+                            super.close();
+                        } finally {
+                            client.shutdown();
+                        }
+                    }
+                };
+            } catch (RuntimeException e) {
+                client.shutdown();
+                throw e;
+            }
+        }
+        throw new JeecgBootException("unsupported storage type: " + file.getStorageType());
     }
 
     @Override

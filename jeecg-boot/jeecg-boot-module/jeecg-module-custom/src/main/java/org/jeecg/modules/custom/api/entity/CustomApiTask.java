@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
@@ -27,9 +28,13 @@ public class CustomApiTask implements Serializable {
     public static final String STATUS_SUCCEEDED = "succeeded";
     public static final String STATUS_FAILED = "failed";
     public static final String STATUS_CANCELLED = "cancelled";
+    public static final String STATUS_TIMEOUT = "timeout";
 
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+
+    @TableField("app_id")
+    private Long appId;
 
     @TableField("task_id")
     private String taskId;
@@ -42,6 +47,12 @@ public class CustomApiTask implements Serializable {
 
     @TableField("client_task_id")
     private String clientTaskId;
+
+    @TableField("idempotency_key")
+    private String idempotencyKey;
+
+    @TableField("request_hash")
+    private String requestHash;
 
     @TableField("document_id")
     private Long documentId;
@@ -90,6 +101,13 @@ public class CustomApiTask implements Serializable {
 
     @TableField("error_message")
     private String errorMessage;
+
+    @TableField("last_heartbeat_at")
+    private LocalDateTime lastHeartbeatAt;
+
+    @Version
+    @TableField("version")
+    private Integer version;
 
     @TableField("callback_status")
     private String callbackStatus;

@@ -7,6 +7,7 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.mapper.CustomApiAppMapper;
 import org.jeecg.modules.custom.api.service.ICustomApiAppService;
+import org.jeecg.modules.custom.api.service.CustomApiRateLimiter;
 import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.vo.AuthTokenRequest;
 import org.jeecg.modules.custom.api.vo.AuthTokenResponse;
@@ -14,6 +15,7 @@ import org.jeecg.modules.custom.api.vo.CustomApiAppResponse;
 import org.jeecg.modules.custom.api.vo.CustomApiAppSaveRequest;
 import org.jeecg.modules.custom.api.vo.CustomApiAppSecretResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +26,9 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
 
     @Value("${custom.api.token-ttl-seconds:7200}")
     private Long tokenTtlSeconds;
+
+    @Autowired
+    private CustomApiRateLimiter rateLimiter;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -126,6 +131,7 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
         if (!CustomApiCrypto.equalsHash(request.getAppSecret(), app.getAppSecretHash())) {
             throw new JeecgBootException("invalid app secret");
         }
+        rateLimiter.check(app, "token");
 
         String token = CustomApiCrypto.randomToken("cai_", 32);
         app.setAccessTokenHash(CustomApiCrypto.sha256(token));
