@@ -74,7 +74,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
     private static final int ERROR_CODE_MAX_LENGTH = 100;
     private static final int ERROR_MESSAGE_MAX_LENGTH = 1000;
     private static final int CALLBACK_SECRET_MAX_BYTES = 512;
-    private final Map<Class<?>, Map<String, Integer>> columnSizeCache = new ConcurrentHashMap<>();
+    private final Map<Class<?>, Map<String, ColumnLimit>> columnSizeCache = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper = JsonMapper.builder()
             .addModule(customApiImportModule())
@@ -669,7 +669,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         if (entity == null) {
             return;
         }
-        Map<String, Integer> columnSizes = columnSizeCache.computeIfAbsent(entity.getClass(), this::loadColumnSizes);
+        Map<String, ColumnLimit> columnLimits = columnSizeCache.computeIfAbsent(entity.getClass(), this::loadColumnLimits);
         for (Field field : entity.getClass().getDeclaredFields()) {
             if (!String.class.equals(field.getType())) {
                 continue;
@@ -678,17 +678,21 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
             if (tableField == null || tableField.value().isBlank()) {
                 continue;
             }
-            Integer maxLength = columnSizes.get(tableField.value().toUpperCase());
-            if (maxLength == null || maxLength <= 0) {
+            ColumnLimit limit = columnLimits.get(tableField.value().toUpperCase());
+            if (limit == null || (limit.maxCharacters() <= 0 && limit.maxBytes() <= 0)) {
                 continue;
             }
             try {
                 field.setAccessible(true);
                 String value = (String) field.get(entity);
-                if (value != null && value.length() > maxLength) {
-                    log.warn("Custom API import value truncated, entity={}, field={}, column={}, length={} > {}",
-                            entity.getClass().getSimpleName(), field.getName(), tableField.value(), value.length(), maxLength);
-                    field.set(entity, value.substring(0, maxLength));
+                String trimmed = truncateToColumnLimit(value, limit);
+                if (value != null && !value.equals(trimmed)) {
+                    log.warn("Custom API import value truncated, entity={}, field={}, column={}, "
+                                    + "characters={}/{}, bytes={}/{}",
+                            entity.getClass().getSimpleName(), field.getName(), tableField.value(),
+                            value.codePointCount(0, value.length()), limit.maxCharacters(),
+                            value.getBytes(StandardCharsets.UTF_8).length, limit.maxBytes());
+                    field.set(entity, trimmed);
                 }
             } catch (IllegalAccessException e) {
                 throw new JeecgBootException("trim import field failed: " + field.getName());
@@ -696,30 +700,75 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         }
     }
 
-    private Map<String, Integer> loadColumnSizes(Class<?> entityClass) {
+    private String truncateToColumnLimit(String value, ColumnLimit limit) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        int end = value.length();
+        int characterLimit = limit.maxCharacters();
+        int characterCount = value.codePointCount(0, end);
+        if (characterLimit > 0 && characterCount > characterLimit) {
+            end = value.offsetByCodePoints(0, characterLimit);
+        }
+        if (limit.maxBytes() > 0) {
+            int index = 0;
+            int bytes = 0;
+            while (index < end) {
+                int codePoint = value.codePointAt(index);
+                int codePointBytes = utf8Length(codePoint);
+                if (bytes + codePointBytes > limit.maxBytes()) {
+                    break;
+                }
+                bytes += codePointBytes;
+                index += Character.charCount(codePoint);
+            }
+            end = index;
+        }
+        return end == value.length() ? value : value.substring(0, end);
+    }
+
+    private int utf8Length(int codePoint) {
+        if (codePoint <= 0x7f) {
+            return 1;
+        }
+        if (codePoint <= 0x7ff) {
+            return 2;
+        }
+        if (codePoint <= 0xffff) {
+            return 3;
+        }
+        return 4;
+    }
+
+    private Map<String, ColumnLimit> loadColumnLimits(Class<?> entityClass) {
         TableName tableName = entityClass.getAnnotation(TableName.class);
         if (tableName == null || tableName.value().isBlank() || dataSource == null) {
             return Map.of();
         }
-        Map<String, Integer> sizes = new ConcurrentHashMap<>();
+        Map<String, ColumnLimit> limits = new ConcurrentHashMap<>();
         try (Connection connection = dataSource.getConnection()) {
             DatabaseMetaData metaData = connection.getMetaData();
-            loadColumnSizes(metaData, tableName.value().toUpperCase(), sizes);
-            if (sizes.isEmpty()) {
-                loadColumnSizes(metaData, tableName.value(), sizes);
+            loadColumnLimits(metaData, tableName.value().toUpperCase(), limits);
+            if (limits.isEmpty()) {
+                loadColumnLimits(metaData, tableName.value(), limits);
             }
         } catch (Exception e) {
-            log.warn("Custom API load column sizes failed, table={}", tableName.value(), e);
+            log.warn("Custom API load column limits failed, table={}", tableName.value(), e);
         }
-        return sizes;
+        return limits;
     }
 
-    private void loadColumnSizes(DatabaseMetaData metaData, String tableName, Map<String, Integer> sizes) throws Exception {
+    private void loadColumnLimits(DatabaseMetaData metaData, String tableName,
+                                  Map<String, ColumnLimit> limits) throws Exception {
         try (ResultSet columns = metaData.getColumns(null, null, tableName, "%")) {
             while (columns.next()) {
-                sizes.put(columns.getString("COLUMN_NAME").toUpperCase(), columns.getInt("COLUMN_SIZE"));
+                limits.put(columns.getString("COLUMN_NAME").toUpperCase(), new ColumnLimit(
+                        columns.getInt("COLUMN_SIZE"), columns.getInt("CHAR_OCTET_LENGTH")));
             }
         }
+    }
+
+    private record ColumnLimit(int maxCharacters, int maxBytes) {
     }
 
     private static SimpleModule customApiImportModule() {

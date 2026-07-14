@@ -13,7 +13,12 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.sql.DataSource;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -114,6 +119,40 @@ class CustomParseResultTransactionTest {
         assertThat(fixture.task.getLastHeartbeatAt()).isNotNull();
     }
 
+    @Test
+    void byteLimitedColumnsTrimMultibyteValuesBeforeBatchInsert() throws Exception {
+        Fixture fixture = fixture(task(1));
+        doAnswer(invocation -> {
+            ((DecHead) invocation.getArgument(0)).setId(88L);
+            return true;
+        }).when(fixture.decHeadService).save(any(DecHead.class));
+        DataSource dataSource = mock(DataSource.class);
+        Connection connection = mock(Connection.class);
+        DatabaseMetaData metadata = mock(DatabaseMetaData.class);
+        ResultSet emptyColumns = mock(ResultSet.class);
+        ResultSet listColumns = mock(ResultSet.class);
+        when(dataSource.getConnection()).thenReturn(connection);
+        when(connection.getMetaData()).thenReturn(metadata);
+        when(metadata.getColumns(null, null, "DEC_HEAD", "%")).thenReturn(emptyColumns);
+        when(metadata.getColumns(null, null, "DEC_LIST", "%")).thenReturn(listColumns);
+        when(emptyColumns.next()).thenReturn(false);
+        when(listColumns.next()).thenReturn(true, false);
+        when(listColumns.getString("COLUMN_NAME")).thenReturn("G_MODEL");
+        when(listColumns.getInt("COLUMN_SIZE")).thenReturn(255);
+        when(listColumns.getInt("CHAR_OCTET_LENGTH")).thenReturn(255);
+        setField(fixture.service, "dataSource", dataSource);
+        String oversizedByBytes = "4|3|" + "实验室用试剂|".repeat(30);
+
+        fixture.service.handleParseResult(succeededWithGModel(oversizedByBytes));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<DecList>> lists = ArgumentCaptor.forClass(List.class);
+        verify(fixture.decListService).saveBatch(lists.capture());
+        String stored = lists.getValue().get(0).getGModel();
+        assertThat(stored).startsWith("4|3|");
+        assertThat(stored.getBytes(StandardCharsets.UTF_8).length).isLessThanOrEqualTo(255);
+    }
+
     private Fixture fixture(CustomApiTask task) throws Exception {
         CustomApiTaskServiceImpl service = new CustomApiTaskServiceImpl();
         CustomApiTaskMapper taskMapper = mock(CustomApiTaskMapper.class);
@@ -162,6 +201,28 @@ class CustomParseResultTransactionTest {
                 Map.entry("result", Map.of(
                         "DecHead", Map.of("TradeName", "Customer A"),
                         "DecList", List.of(Map.of("GNo", 1, "GName", "Goods")))));
+    }
+
+    private Map<String, Object> succeededWithGModel(String gModel) {
+        return Map.ofEntries(
+                Map.entry("eventId", "evt-result-1"),
+                Map.entry("eventType", "parse.status"),
+                Map.entry("schemaVersion", 2),
+                Map.entry("taskId", "task-1"),
+                Map.entry("runNo", 1),
+                Map.entry("attemptNo", 1),
+                Map.entry("customerCode", "CUSTOMER-A"),
+                Map.entry("agentCode", "CUSTOMS"),
+                Map.entry("status", "succeeded"),
+                Map.entry("stage", "completed"),
+                Map.entry("progress", 100),
+                Map.entry("occurredAt", "2026-07-14T12:00:00Z"),
+                Map.entry("result", Map.of(
+                        "DecHead", Map.of("TradeName", "Customer A"),
+                        "DecList", List.of(Map.of(
+                                "GNo", 1,
+                                "GName", "Goods",
+                                "GModel", gModel)))));
     }
 
     private Map<String, Object> running(int runNo) {

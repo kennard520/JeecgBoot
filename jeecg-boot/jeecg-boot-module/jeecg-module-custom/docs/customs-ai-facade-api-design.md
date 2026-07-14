@@ -445,6 +445,9 @@ Implemented in this module:
 4. `CustomsAiClient` for internal calls to `customs-ai`.
 5. After `customs-ai` succeeds, best-effort mapping of `DecHead` and `DecList` into existing CIT tables.
 6. Existing `Document` records are created and updated with `decHeadId`, `taskId`, and parsing status.
+7. Before inserting `DecHead`/`DecList`, string values are constrained using JDBC `COLUMN_SIZE` and
+   `CHAR_OCTET_LENGTH`. This supports both character-limited schemas and DM8 `VARCHAR2(... BYTE)` columns while
+   preserving Unicode code-point boundaries.
 
 Development/local upload fallback:
 
