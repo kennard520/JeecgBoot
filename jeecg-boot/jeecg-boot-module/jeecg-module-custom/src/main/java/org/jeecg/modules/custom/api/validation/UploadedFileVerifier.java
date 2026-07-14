@@ -190,15 +190,28 @@ public class UploadedFileVerifier {
         if (entry.getGeneralPurposeBit().usesEncryption()) {
             throw new JeecgBootException("ZIP encrypted entries are not allowed");
         }
+        if (normalized.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+            throw new JeecgBootException("nested ZIP archives are not allowed");
+        }
     }
 
     private long readAndVerifyEntry(ZipFile zip, ZipArchiveEntry entry) throws IOException {
         CRC32 crc = new CRC32();
         long size = 0L;
         byte[] buffer = new byte[64 * 1024];
+        byte[] prefix = new byte[4];
+        int prefixLength = 0;
         try (InputStream input = zip.getInputStream(entry)) {
             int read;
             while ((read = input.read(buffer)) != -1) {
+                if (prefixLength < prefix.length) {
+                    int prefixBytes = Math.min(prefix.length - prefixLength, read);
+                    System.arraycopy(buffer, 0, prefix, prefixLength, prefixBytes);
+                    prefixLength += prefixBytes;
+                    if (prefixLength == prefix.length && isZipMagic(prefix)) {
+                        throw new JeecgBootException("nested ZIP archives are not allowed");
+                    }
+                }
                 size += read;
                 if (size > maxZipEntryBytes) {
                     throw new JeecgBootException("ZIP entry exceeds maximum uncompressed size");
@@ -210,6 +223,13 @@ public class UploadedFileVerifier {
             throw new JeecgBootException("ZIP entry CRC mismatch");
         }
         return size;
+    }
+
+    private boolean isZipMagic(byte[] magic) {
+        return magic[0] == 0x50 && magic[1] == 0x4b
+                && ((magic[2] == 0x03 && magic[3] == 0x04)
+                || (magic[2] == 0x05 && magic[3] == 0x06)
+                || (magic[2] == 0x07 && magic[3] == 0x08));
     }
 
     private void enforceRatio(long uncompressed, long compressed, String message) {

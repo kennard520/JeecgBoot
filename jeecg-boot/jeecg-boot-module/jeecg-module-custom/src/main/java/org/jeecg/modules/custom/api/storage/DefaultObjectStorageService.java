@@ -21,15 +21,16 @@ import org.jeecg.modules.custom.api.vo.FileDownloadInfo;
 import org.jeecg.modules.custom.api.vo.FileUploadUrlResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.util.FileCopyUtils;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
@@ -116,17 +117,51 @@ public class DefaultObjectStorageService implements ObjectStorageService {
         if (upload == null || upload.isEmpty()) {
             throw new JeecgBootException("upload file is empty");
         }
+        Path temp = null;
         try {
             Path dir = Path.of(uploadPath, API_FILE_PATH, file.getFileId());
             Files.createDirectories(dir);
             Path target = dir.resolve(file.getOriginalFilename());
-            FileCopyUtils.copy(upload.getBytes(), target.toFile());
+            temp = Files.createTempFile(dir, ".upload-", ".tmp");
+            try (InputStream input = upload.getInputStream()) {
+                Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING);
+            }
+            moveReplacing(temp, target);
+            temp = null;
             file.setStoragePath(target.toAbsolutePath().toString());
             if (upload.getContentType() != null) {
                 file.setContentType(upload.getContentType());
             }
         } catch (Exception e) {
             throw new JeecgBootException("save local upload failed: " + e.getMessage());
+        } finally {
+            deleteQuietly(temp);
+        }
+    }
+
+    @Override
+    public void freezeUploadedObject(CustomApiFile file, String immutableObjectKey) {
+        if (immutableObjectKey == null || immutableObjectKey.isBlank()) {
+            throw new JeecgBootException("immutable object key is required");
+        }
+        if (immutableObjectKey.equals(file.getObjectKey())) {
+            throw new JeecgBootException("immutable object key must differ from staging key");
+        }
+        try {
+            if (CommonConstant.UPLOAD_TYPE_LOCAL.equals(file.getStorageType())) {
+                freezeLocalObject(file, immutableObjectKey);
+            } else if (CommonConstant.UPLOAD_TYPE_OSS.equals(file.getStorageType())) {
+                freezeOssObject(file, immutableObjectKey);
+            } else if (isTencentCos(file.getStorageType())) {
+                freezeCosObject(file, immutableObjectKey);
+            } else {
+                throw new JeecgBootException("unsupported storage type: " + file.getStorageType());
+            }
+            file.setObjectKey(immutableObjectKey);
+        } catch (JeecgBootException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new JeecgBootException("freeze uploaded object failed: " + e.getMessage());
         }
     }
 
@@ -280,6 +315,89 @@ public class DefaultObjectStorageService implements ObjectStorageService {
         COSCredentials credentials = new BasicCOSCredentials(cosSecretId, cosSecretKey);
         ClientConfig clientConfig = new ClientConfig(new Region(cosRegion));
         return new COSClient(credentials, clientConfig);
+    }
+
+    private void freezeLocalObject(CustomApiFile file, String immutableObjectKey) throws IOException {
+        if (file.getStoragePath() == null || file.getStoragePath().isBlank()) {
+            throw new JeecgBootException("local upload path is missing");
+        }
+        Path source = Path.of(file.getStoragePath()).toAbsolutePath().normalize();
+        if (!Files.isRegularFile(source)) {
+            throw new JeecgBootException("local upload file not found");
+        }
+        Path target = resolveLocalObjectPath(immutableObjectKey);
+        if (Files.exists(target)) {
+            throw new JeecgBootException("immutable local object already exists");
+        }
+        Files.createDirectories(target.getParent());
+        Path temp = Files.createTempFile(target.getParent(), ".freeze-", ".tmp");
+        try {
+            Files.copy(source, temp, StandardCopyOption.REPLACE_EXISTING);
+            moveWithoutReplace(temp, target);
+            temp = null;
+        } finally {
+            deleteQuietly(temp);
+        }
+        file.setStoragePath(target.toString());
+    }
+
+    private void freezeOssObject(CustomApiFile file, String immutableObjectKey) {
+        OSSClient client = new OSSClient(ossEndpoint, new DefaultCredentialProvider(ossAccessKey, ossSecretKey), null);
+        try {
+            if (client.doesObjectExist(file.getBucket(), immutableObjectKey)) {
+                throw new JeecgBootException("immutable OSS object already exists");
+            }
+            client.copyObject(file.getBucket(), file.getObjectKey(), file.getBucket(), immutableObjectKey);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    private void freezeCosObject(CustomApiFile file, String immutableObjectKey) {
+        COSClient client = createCosClient();
+        try {
+            if (client.doesObjectExist(file.getBucket(), immutableObjectKey)) {
+                throw new JeecgBootException("immutable COS object already exists");
+            }
+            client.copyObject(file.getBucket(), file.getObjectKey(), file.getBucket(), immutableObjectKey);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    private Path resolveLocalObjectPath(String objectKey) {
+        Path root = Path.of(uploadPath).toAbsolutePath().normalize();
+        Path target = root.resolve(objectKey).normalize();
+        if (!target.startsWith(root)) {
+            throw new JeecgBootException("immutable object key escapes upload root");
+        }
+        return target;
+    }
+
+    private void moveReplacing(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void moveWithoutReplace(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException ignored) {
+            Files.move(source, target);
+        }
+    }
+
+    private void deleteQuietly(Path path) {
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+        }
     }
 
     private Date toDate(LocalDateTime value) {

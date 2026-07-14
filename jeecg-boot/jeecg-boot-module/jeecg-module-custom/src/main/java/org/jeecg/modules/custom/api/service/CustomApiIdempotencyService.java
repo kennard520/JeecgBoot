@@ -6,6 +6,7 @@ import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.exception.CustomApiConflictException;
 import org.jeecg.modules.custom.api.mapper.CustomApiFileMapper;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -34,6 +35,20 @@ public class CustomApiIdempotencyService {
                     .eq(CustomApiFile::getIdempotencyKey, idempotencyKey.trim()));
         }
         return verifyHash(existing, requestHash, "file");
+    }
+
+    public CustomApiFile insertFileOrFindWinner(CustomApiFile candidate) {
+        try {
+            fileMapper.insert(candidate);
+            return candidate;
+        } catch (DuplicateKeyException duplicate) {
+            CustomApiFile winner = findFile(candidate.getAppId(), candidate.getClientFileId(),
+                    candidate.getIdempotencyKey(), candidate.getRequestHash());
+            if (winner == null) {
+                throw duplicate;
+            }
+            return winner;
+        }
     }
 
     public CustomApiTask findTask(Long appId, String clientTaskId, String idempotencyKey, String requestHash) {

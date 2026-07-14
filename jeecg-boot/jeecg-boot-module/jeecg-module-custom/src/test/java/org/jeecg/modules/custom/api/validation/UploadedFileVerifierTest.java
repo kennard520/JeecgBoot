@@ -1,5 +1,8 @@
 package org.jeecg.modules.custom.api.validation;
 
+import org.apache.commons.compress.archivers.zip.UnixStat;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.storage.ObjectStorageService;
@@ -8,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -94,6 +98,49 @@ class UploadedFileVerifierTest {
     }
 
     @Test
+    void rejectsNestedZipArchive() throws Exception {
+        byte[] nested = zip(Map.of("payload.txt", "nested"));
+        byte[] bytes = zipBytes(Map.of("nested.zip", nested));
+        CustomApiFile file = expectedZip(bytes);
+        supply(file, bytes);
+
+        assertThatThrownBy(() -> verifier(10).verify(file))
+                .hasMessageContaining("nested ZIP");
+    }
+
+    @Test
+    void rejectsNestedZipArchiveEvenWhenExtensionIsDisguised() throws Exception {
+        byte[] nested = zip(Map.of("payload.txt", "nested"));
+        byte[] bytes = zipBytes(Map.of("payload.bin", nested));
+        CustomApiFile file = expectedZip(bytes);
+        supply(file, bytes);
+
+        assertThatThrownBy(() -> verifier(10).verify(file))
+                .hasMessageContaining("nested ZIP");
+    }
+
+    @Test
+    void rejectsUnixSymbolicLinkEntry() throws Exception {
+        byte[] bytes = symlinkZip();
+        CustomApiFile file = expectedZip(bytes);
+        supply(file, bytes);
+
+        assertThatThrownBy(() -> verifier(10).verify(file))
+                .hasMessageContaining("symbolic links");
+    }
+
+    @Test
+    void rejectsZipBombByCompressionRatio() throws Exception {
+        byte[] payload = new byte[64 * 1024];
+        byte[] bytes = zipBytes(Map.of("payload.bin", payload));
+        CustomApiFile file = expectedZip(bytes);
+        supply(file, bytes);
+
+        assertThatThrownBy(() -> verifier(10, 2L).verify(file))
+                .hasMessageContaining("compression ratio");
+    }
+
+    @Test
     void rejectsTooManyEntries() throws Exception {
         Map<String, String> entries = new LinkedHashMap<>();
         entries.put("one.txt", "1");
@@ -120,8 +167,12 @@ class UploadedFileVerifierTest {
     }
 
     private UploadedFileVerifier verifier(int maxEntries) {
+        return verifier(maxEntries, 100L);
+    }
+
+    private UploadedFileVerifier verifier(int maxEntries, long maxCompressionRatio) {
         return new UploadedFileVerifier(storage, 2 * 1024 * 1024L, maxEntries,
-                1024 * 1024L, 2 * 1024 * 1024L, 100L);
+                1024 * 1024L, 2 * 1024 * 1024L, maxCompressionRatio);
     }
 
     private CustomApiFile expectedZip(byte[] bytes) {
@@ -142,13 +193,31 @@ class UploadedFileVerifierTest {
     }
 
     private byte[] zip(Map<String, String> entries) throws IOException {
+        Map<String, byte[]> binaryEntries = new LinkedHashMap<>();
+        entries.forEach((name, value) -> binaryEntries.put(name, value.getBytes(StandardCharsets.UTF_8)));
+        return zipBytes(binaryEntries);
+    }
+
+    private byte[] zipBytes(Map<String, byte[]> entries) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(out)) {
-            for (Map.Entry<String, String> entry : entries.entrySet()) {
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
                 zip.putNextEntry(new ZipEntry(entry.getKey()));
-                zip.write(entry.getValue().getBytes());
+                zip.write(entry.getValue());
                 zip.closeEntry();
             }
+        }
+        return out.toByteArray();
+    }
+
+    private byte[] symlinkZip() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (ZipArchiveOutputStream zip = new ZipArchiveOutputStream(out)) {
+            ZipArchiveEntry link = new ZipArchiveEntry("invoice-link");
+            link.setUnixMode(UnixStat.LINK_FLAG | 0777);
+            zip.putArchiveEntry(link);
+            zip.write("invoice.txt".getBytes(StandardCharsets.UTF_8));
+            zip.closeArchiveEntry();
         }
         return out.toByteArray();
     }

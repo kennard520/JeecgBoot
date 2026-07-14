@@ -24,8 +24,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Service
 public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, CustomApiFile> implements ICustomApiFileService {
@@ -40,6 +42,9 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
 
     @Value("${custom.api.file.max-upload-bytes:104857600}")
     private Long maxUploadBytes = 104857600L;
+
+    @Value("${custom.api.upload-capability-secret:${custom.api.internal-token:}}")
+    private String uploadCapabilitySecret;
 
     public CustomApiFileServiceImpl(ObjectStorageService objectStorageService,
                                     UploadedFileVerifier uploadedFileVerifier,
@@ -89,7 +94,7 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
         LocalDate today = LocalDate.now();
         String objectKey = String.format("custom-api/uploads/%04d/%02d/%02d/%s/%s",
                 today.getYear(), today.getMonthValue(), today.getDayOfMonth(), fileId, safeFilename);
-        String uploadToken = CustomApiCrypto.randomToken("upl_", 24);
+        LocalDateTime expiresAt = LocalDateTime.now().plusSeconds(uploadUrlTtlSeconds).withNano(0);
 
         CustomApiFile file = new CustomApiFile()
                 .setAppId(app.getId())
@@ -103,21 +108,22 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
                 .setFileSize(request.getFileSize())
                 .setSha256(request.getSha256())
                 .setObjectKey(objectKey)
-                .setUploadTokenHash(CustomApiCrypto.sha256(uploadToken))
                 .setStatus(CustomApiFile.STATUS_PENDING)
                 .setCreatedAt(LocalDateTime.now())
-                .setExpiresAt(LocalDateTime.now().plusSeconds(uploadUrlTtlSeconds));
+                .setExpiresAt(expiresAt);
+        String uploadToken = stableUploadToken(file);
+        file.setUploadTokenHash(CustomApiCrypto.sha256(uploadToken));
 
         FileUploadUrlResponse response = objectStorageService.createUploadUrl(file, uploadToken, servletRequest);
-        save(file);
-        return response;
+        CustomApiFile persisted = idempotencyService.insertFileOrFindWinner(file);
+        return persisted == file ? response : existingUploadResponse(persisted, servletRequest);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public FileInfoResponse complete(CustomApiApp app, String fileId, FileCompleteRequest request) {
-        CustomApiFile file = requireOwnedFile(app, fileId);
-        if (CustomApiFile.STATUS_EXPIRED.equals(file.getStatus()) || CustomApiFile.STATUS_DELETED.equals(file.getStatus())) {
+        CustomApiFile file = requireOwnedFile(app, fileId, true);
+        if (!CustomApiFile.STATUS_PENDING.equals(file.getStatus())) {
             throw new JeecgBootException("file cannot be completed in current status: " + file.getStatus());
         }
         if (file.getExpiresAt() != null && file.getExpiresAt().isBefore(LocalDateTime.now())) {
@@ -128,6 +134,9 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
         if (request != null) {
             // Client completion metadata is intentionally ignored. The object is verified below.
         }
+        String immutableObjectKey = immutableObjectKey(file);
+        objectStorageService.freezeUploadedObject(file, immutableObjectKey);
+        file.setObjectKey(immutableObjectKey);
         VerifiedFile verified = uploadedFileVerifier.verify(file);
         file.setFileSize(verified.actualFileSize());
         file.setSha256(verified.actualSha256());
@@ -135,6 +144,7 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
         file.setActualSha256(verified.actualSha256());
         file.setVerifiedAt(LocalDateTime.now());
         file.setContentType(verified.detectedType());
+        file.setUploadTokenHash(null);
         file.setStatus(CustomApiFile.STATUS_UPLOADED);
         file.setUploadedAt(LocalDateTime.now());
         updateById(file);
@@ -144,39 +154,49 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void uploadLocalContent(String fileId, String uploadToken, MultipartFile upload) {
-        CustomApiFile file = getOne(new LambdaQueryWrapper<CustomApiFile>().eq(CustomApiFile::getFileId, fileId), false);
+        CustomApiFile file = getOne(new LambdaQueryWrapper<CustomApiFile>()
+                .eq(CustomApiFile::getFileId, fileId)
+                .last("FOR UPDATE"), false);
         if (file == null) {
             throw new JeecgBootException("file not found");
         }
-        if (!CustomApiCrypto.equalsHash(uploadToken, file.getUploadTokenHash())) {
-            throw new JeecgBootException("invalid upload token");
+        if (!CustomApiFile.STATUS_PENDING.equals(file.getStatus())) {
+            throw new JeecgBootException("file content cannot be uploaded in current status: " + file.getStatus());
         }
         if (file.getExpiresAt() != null && file.getExpiresAt().isBefore(LocalDateTime.now())) {
             file.setStatus(CustomApiFile.STATUS_EXPIRED);
             updateById(file);
             throw new JeecgBootException("upload url expired");
         }
+        if (!CustomApiCrypto.equalsHash(uploadToken, file.getUploadTokenHash())) {
+            throw new JeecgBootException("invalid upload token");
+        }
         objectStorageService.saveLocalUpload(file, upload);
+        file.setUploadTokenHash(null);
         updateById(file);
     }
 
     @Override
     public CustomApiFile requireUploadedFile(CustomApiApp app, String fileId) {
-        CustomApiFile file = requireOwnedFile(app, fileId);
+        CustomApiFile file = requireOwnedFile(app, fileId, false);
         if (!CustomApiFile.STATUS_UPLOADED.equals(file.getStatus())) {
             throw new JeecgBootException("file is not uploaded");
         }
         return file;
     }
 
-    private CustomApiFile requireOwnedFile(CustomApiApp app, String fileId) {
+    private CustomApiFile requireOwnedFile(CustomApiApp app, String fileId, boolean forUpdate) {
         if (isBlank(fileId)) {
             throw new JeecgBootException("fileId is required");
         }
-        CustomApiFile file = getOne(new LambdaQueryWrapper<CustomApiFile>()
+        LambdaQueryWrapper<CustomApiFile> query = new LambdaQueryWrapper<CustomApiFile>()
                 .eq(CustomApiFile::getFileId, fileId)
                 .eq(CustomApiFile::getAppId, app.getId())
-                .eq(CustomApiFile::getCustomerCode, app.getCustomerCode()), false);
+                .eq(CustomApiFile::getCustomerCode, app.getCustomerCode());
+        if (forUpdate) {
+            query.last("FOR UPDATE");
+        }
+        CustomApiFile file = getOne(query, false);
         if (file == null) {
             throw new JeecgBootException("file not found");
         }
@@ -206,11 +226,43 @@ public class CustomApiFileServiceImpl extends ServiceImpl<CustomApiFileMapper, C
                     .setObjectKey(file.getObjectKey())
                     .setExpiresAt(file.getExpiresAt());
         }
-        String uploadToken = CustomApiCrypto.randomToken("upl_", 24);
-        file.setUploadTokenHash(CustomApiCrypto.sha256(uploadToken));
-        file.setExpiresAt(LocalDateTime.now().plusSeconds(uploadUrlTtlSeconds));
-        updateById(file);
+        if (!CustomApiFile.STATUS_PENDING.equals(file.getStatus())) {
+            throw new JeecgBootException("file upload capability is unavailable in current status: " + file.getStatus());
+        }
+        if (file.getExpiresAt() == null || file.getExpiresAt().isBefore(LocalDateTime.now())) {
+            file.setStatus(CustomApiFile.STATUS_EXPIRED);
+            updateById(file);
+            throw new JeecgBootException("upload capability expired");
+        }
+        if (isBlank(file.getUploadTokenHash())) {
+            throw new JeecgBootException("upload capability was already consumed; complete the existing file");
+        }
+        String uploadToken = stableUploadToken(file);
+        if (!CustomApiCrypto.equalsHash(uploadToken, file.getUploadTokenHash())) {
+            throw new JeecgBootException("existing upload capability cannot be replayed safely");
+        }
         return objectStorageService.createUploadUrl(file, uploadToken, request);
+    }
+
+    private String stableUploadToken(CustomApiFile file) {
+        if (isBlank(uploadCapabilitySecret)) {
+            throw new JeecgBootException("custom.api.upload-capability-secret is required");
+        }
+        if (file.getExpiresAt() == null) {
+            throw new JeecgBootException("upload capability expiry is required");
+        }
+        String material = file.getFileId() + "\n"
+                + (file.getRequestHash() == null ? "" : file.getRequestHash()) + "\n"
+                + file.getExpiresAt().withNano(0);
+        String signature = CustomApiCrypto.hmacSha256(uploadCapabilitySecret,
+                material.getBytes(StandardCharsets.UTF_8));
+        return "upl_" + CustomApiCrypto.sha256(signature);
+    }
+
+    private String immutableObjectKey(CustomApiFile file) {
+        String version = UUID.randomUUID().toString().replace("-", "");
+        String filename = isBlank(file.getOriginalFilename()) ? "upload.bin" : file.getOriginalFilename();
+        return "custom-api/objects/" + file.getFileId() + "/" + version + "/" + filename;
     }
 
     private String firstNonBlank(String... values) {

@@ -18,6 +18,8 @@ public interface ObjectStorageService {
 
     void saveLocalUpload(CustomApiFile file, MultipartFile upload);
 
+    void freezeUploadedObject(CustomApiFile file, String immutableObjectKey);
+
     InputStream openStream(CustomApiFile file) throws IOException;
 
     Path downloadToLocal(CustomApiFile file, Path workDir);
