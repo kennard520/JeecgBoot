@@ -21,6 +21,7 @@ import org.jeecg.modules.custom.task.entity.Document;
 import org.jeecg.modules.custom.task.service.IDocumentService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,6 +50,32 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CustomMqOutboxServiceTest {
+
+    @Test
+    void springContextStartsWhenDocumentWorkflowAlsoDependsOnOutbox() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(CustomMqOutboxMapper.class,
+                    () -> mock(CustomMqOutboxMapper.class));
+            context.registerBean(InternalDownloadTokenService.class,
+                    () -> mock(InternalDownloadTokenService.class));
+            context.registerBean(CustomApiTaskMapper.class,
+                    () -> mock(CustomApiTaskMapper.class));
+            context.registerBean(ICustomCallbackDeliveryService.class,
+                    () -> mock(ICustomCallbackDeliveryService.class));
+            context.registerBean(ICustomApiFileService.class,
+                    () -> mock(ICustomApiFileService.class));
+            context.registerBean(IDocumentService.class, () -> {
+                context.getBean(ICustomMqOutboxService.class);
+                return mock(IDocumentService.class);
+            });
+            context.register(CustomMqOutboxServiceImpl.class);
+
+            context.refresh();
+
+            assertThat(context.getBean(ICustomMqOutboxService.class))
+                    .isInstanceOf(CustomMqOutboxServiceImpl.class);
+        }
+    }
 
     @Test
     void createsOnePendingOutboxWithUnsignedStablePayloadTemplate() throws Exception {

@@ -21,6 +21,18 @@ describe('frontend deployment workflow', () => {
     expect(workflow).toContain('frontend-dist.tar.gz');
   });
 
+  it('skips frontend build and transfer for backend-only releases', () => {
+    expect(workflow).toContain('frontend_ci: ${{ steps.changes.outputs.frontend_ci }}');
+    expect(workflow).toContain('frontend_deploy: ${{ steps.changes.outputs.frontend_deploy }}');
+    expect(workflow).toContain("':(exclude)jeecgboot-vue3/tests/**'");
+    expect(workflow).toContain("if: steps.changes.outputs.frontend_ci == 'true'");
+    expect(workflow).toContain("if: steps.changes.outputs.frontend_deploy == 'true'");
+    expect(workflow).toContain("if: needs.build.outputs.frontend_deploy == 'true'");
+    expect(workflow).toContain('DEPLOY_FRONTEND: ${{ needs.build.outputs.frontend_deploy }}');
+    expect(workflow).toContain('envs: PROFILE,DEPLOY_FRONTEND');
+    expect(workflow).toContain('if [ "$DEPLOY_FRONTEND" != "true" ]; then');
+  });
+
   it('deploys the artifact to the current Nginx document root with validation and reload', () => {
     expect(workflow).toContain('/var/wwwroot/cit/dist');
     expect(workflow).toContain('nginx -t');

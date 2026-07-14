@@ -36,11 +36,41 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       short_sha: ${{ steps.sha.outputs.short }}
+      frontend_ci: ${{ steps.changes.outputs.frontend_ci }}
+      frontend_deploy: ${{ steps.changes.outputs.frontend_deploy }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - id: sha
         run: echo "short=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - id: changes
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "frontend_ci=true" >> "$GITHUB_OUTPUT"
+            echo "frontend_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BEFORE="${{ github.event.before }}"
+          if [ -z "$BEFORE" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "frontend_ci=true" >> "$GITHUB_OUTPUT"
+            echo "frontend_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --quiet "$BEFORE" "$GITHUB_SHA" -- jeecgboot-vue3 \
+            ':(exclude)jeecgboot-vue3/tests/**'; then
+            echo "frontend_deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "frontend_deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --quiet "$BEFORE" "$GITHUB_SHA" -- jeecgboot-vue3 .github/workflows/deploy.yml; then
+            echo "frontend_ci=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "frontend_ci=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-java@v4
         with:
@@ -49,28 +79,34 @@ jobs:
           cache: maven
 
       - uses: pnpm/action-setup@v4
+        if: steps.changes.outputs.frontend_ci == 'true'
         with:
           version: 9.15.9
 
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.frontend_ci == 'true'
         with:
           node-version: 20
           cache: pnpm
           cache-dependency-path: ${{ env.FRONTEND_DIR }}/pnpm-lock.yaml
 
       - name: Install frontend dependencies
+        if: steps.changes.outputs.frontend_ci == 'true'
         working-directory: ${{ env.FRONTEND_DIR }}
         run: pnpm install --frozen-lockfile
 
       - name: Test custom frontend workflow
+        if: steps.changes.outputs.frontend_ci == 'true'
         working-directory: ${{ env.FRONTEND_DIR }}
         run: pnpm exec jest tests/unit/custom --runInBand --env=node
 
       - name: Build frontend
+        if: steps.changes.outputs.frontend_deploy == 'true'
         working-directory: ${{ env.FRONTEND_DIR }}
         run: pnpm build
 
       - name: Package frontend artifact
+        if: steps.changes.outputs.frontend_deploy == 'true'
         run: tar -C ${{ env.FRONTEND_DIR }}/dist -czf frontend-dist.tar.gz .
 
       - name: Build jar (jeecg-system-start + 依赖模块)
@@ -89,6 +125,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload frontend artifact
+        if: steps.changes.outputs.frontend_deploy == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
@@ -131,12 +168,14 @@ jobs:
     needs: [build, push]
     steps:
       - name: Download frontend artifact
+        if: needs.build.outputs.frontend_deploy == 'true'
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: deploy-artifacts
 
       - name: Upload frontend artifact to production
+        if: needs.build.outputs.frontend_deploy == 'true'
         uses: appleboy/scp-action@v1
         with:
           host: ${{ env.REMOTE_HOST }}
@@ -150,12 +189,13 @@ jobs:
         uses: appleboy/ssh-action@v1
         env:
           PROFILE: ${{ github.event.inputs.profile || 'dm8' }}
+          DEPLOY_FRONTEND: ${{ needs.build.outputs.frontend_deploy }}
         with:
           host: ${{ env.REMOTE_HOST }}
           username: ${{ env.REMOTE_USER }}
           key: ${{ secrets.TENCENT_SSH_KEY }}
           command_timeout: 30m
-          envs: PROFILE
+          envs: PROFILE,DEPLOY_FRONTEND
           script: |
             set -e
             exec 9>/var/lock/cit-jeecgboot-deploy.lock
@@ -249,6 +289,12 @@ jobs:
                 echo "Rolled back to $OLD_IMAGE"
               fi
               exit 1
+            fi
+
+            if [ "$DEPLOY_FRONTEND" != "true" ]; then
+              echo "Backend deploy success; frontend unchanged"
+              docker image prune -f || true
+              exit 0
             fi
 
             # 当前 smart-entry.citclub.org 由宿主机 Nginx 从该目录提供静态资源。
