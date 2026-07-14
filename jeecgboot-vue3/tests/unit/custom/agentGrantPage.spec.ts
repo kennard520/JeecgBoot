@@ -13,9 +13,8 @@ describe('agent grant admin page wiring', () => {
     expect(source).toMatch(/pagination:\s*false/);
   });
 
-  it('is reachable from the custom administration routes', () => {
-    expect(routes).toContain("path: 'ai/grant'");
-    expect(routes).toContain("name: 'CustomAiAgentGrant'");
-    expect(routes).toContain("views/custom/ai/grant/index.vue");
+  it('does not bypass backend menu permissions through a global static route', () => {
+    expect(routes).not.toContain("path: 'ai/grant'");
+    expect(routes).not.toContain("name: 'CustomAiAgentGrant'");
   });
 });

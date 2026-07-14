@@ -15,6 +15,7 @@ export function createDocumentPolling(options: DocumentPollingOptions): Document
   let timer: ReturnType<typeof setTimeout> | undefined;
   let active = false;
   let stopped = false;
+  let inFlight = false;
   let failureIndex = 0;
 
   function clearTimer() {
@@ -36,15 +37,17 @@ export function createDocumentPolling(options: DocumentPollingOptions): Document
   }
 
   async function poll() {
-    if (stopped || !active || !options.isVisible()) {
+    if (stopped || !active || !options.isVisible() || inFlight) {
       return;
     }
+    inFlight = true;
     try {
       await options.reload();
       failureIndex = 0;
     } catch (_error) {
       failureIndex = Math.min(failureIndex + 1, delays.length - 1);
     } finally {
+      inFlight = false;
       schedule();
     }
   }
@@ -61,7 +64,9 @@ export function createDocumentPolling(options: DocumentPollingOptions): Document
     },
     handleVisibilityChange() {
       clearTimer();
-      schedule();
+      if (!stopped && active && options.isVisible() && !inFlight) {
+        void poll();
+      }
     },
     stop() {
       stopped = true;

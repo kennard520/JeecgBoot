@@ -52,6 +52,20 @@ describe('API app agent grant contract', () => {
     });
   });
 
+  it('does not fall back to companyCode when loading persisted grants fails', async () => {
+    get.mockImplementation(({ url }) => {
+      if (url === '/custom/api/app/list') {
+        return Promise.resolve({ records: [{ id: 7, appKey: 'demo', companyCode: 'CUSTOMS' }], total: 1 });
+      }
+      if (url === '/custom/ai/admin/app-grants/7') {
+        return Promise.reject(new Error('grant service unavailable'));
+      }
+      throw new Error(`unexpected url: ${url}`);
+    });
+
+    await expect(list({ pageNo: 1 })).rejects.toThrow('grant service unavailable');
+  });
+
   it('saves compatible app fields first and then replaces the app agent grants', async () => {
     post.mockResolvedValue({ id: 7, appKey: 'demo', companyCode: 'ILLUMNA-CUSTOMS' });
     put.mockResolvedValue([]);

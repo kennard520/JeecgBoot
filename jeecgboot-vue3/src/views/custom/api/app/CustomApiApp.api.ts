@@ -24,21 +24,17 @@ async function getAppAgentFields(record: any) {
   if (!record?.id) {
     return compatible;
   }
-  try {
-    const grants = await defHttp.get({ url: `${Api.appGrants}/${record.id}` });
-    const enabledGrants = (Array.isArray(grants) ? grants : []).filter((item) => isEnabled(item.enabled));
-    if (enabledGrants.length === 0) {
-      return compatible;
-    }
-    const allowedAgentCodes = enabledGrants.map((item) => item.agentCode).filter(Boolean);
-    const defaultGrant = enabledGrants.find((item) => `${item.isDefault ?? 0}` === '1');
-    return {
-      allowedAgentCodes,
-      defaultAgentCode: defaultGrant?.agentCode || compatible.defaultAgentCode || allowedAgentCodes[0],
-    };
-  } catch (_error) {
+  const grants = await defHttp.get({ url: `${Api.appGrants}/${record.id}` });
+  const enabledGrants = (Array.isArray(grants) ? grants : []).filter((item) => isEnabled(item.enabled));
+  if (enabledGrants.length === 0) {
     return compatible;
   }
+  const allowedAgentCodes = enabledGrants.map((item) => item.agentCode).filter(Boolean);
+  const defaultGrant = enabledGrants.find((item) => `${item.isDefault ?? 0}` === '1');
+  return {
+    allowedAgentCodes,
+    defaultAgentCode: defaultGrant?.agentCode || compatible.defaultAgentCode || allowedAgentCodes[0],
+  };
 }
 
 export const list = async (params) => {

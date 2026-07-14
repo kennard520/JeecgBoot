@@ -10,6 +10,12 @@ describe('frontend deployment workflow', () => {
     expect(workflow).toContain("- 'jeecgboot-vue3/**'");
   });
 
+  it('serializes production releases and takes a server-side deploy lock', () => {
+    expect(workflow).toMatch(/concurrency:\s*\n\s*group: smart-entry-production\s*\n\s*cancel-in-progress: false/);
+    expect(workflow).toContain('flock -w 600 9');
+    expect(workflow).toContain('.dist-backup-${{ needs.build.outputs.short_sha }}');
+  });
+
   it('builds and uploads the production frontend artifact', () => {
     expect(workflow).toContain('pnpm build');
     expect(workflow).toContain('frontend-dist.tar.gz');
@@ -25,6 +31,9 @@ describe('frontend deployment workflow', () => {
     const healthCheck = "curl -fkSs https://127.0.0.1/ -H 'Host: smart-entry.citclub.org'";
     expect(workflow).toContain(healthCheck);
     expect(workflow).toContain('grep -q \'id="app"\'');
+    expect(workflow).toContain('FRONTEND_MAIN_ASSET=');
+    expect(workflow).toContain('https://127.0.0.1${FRONTEND_MAIN_ASSET}');
+    expect(workflow).toContain('/jeecgboot/sys/getEncryptedString');
     expect(workflow.indexOf(healthCheck)).toBeLessThan(workflow.indexOf('echo "Deploy success"'));
 
     const rollbackFunction = workflow.slice(workflow.indexOf('rollback_release()'), workflow.indexOf('rm -rf "$FRONTEND_STAGE"'));
@@ -32,6 +41,7 @@ describe('frontend deployment workflow', () => {
     expect(rollbackFunction).toContain('rollback_backend');
     const backendRollbackFunction = workflow.slice(workflow.indexOf('rollback_backend()'), workflow.indexOf('rollback_release()'));
     expect(backendRollbackFunction).toContain('run_container "$OLD_IMAGE"');
+    expect(backendRollbackFunction).toContain('wait_for_backend');
 
     const failureBranch = workflow.slice(workflow.indexOf('Frontend health check failed'), workflow.indexOf('echo "Deploy success"'));
     expect(failureBranch).toContain('rollback_release');

@@ -43,8 +43,32 @@ describe('document polling', () => {
 
     visible = true;
     polling.handleVisibilityChange();
+    await Promise.resolve();
+    expect(reload).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(3_000);
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not overlap a visibility refresh with an in-flight reload', async () => {
+    let resolveReload!: () => void;
+    const reload = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveReload = resolve;
+        })
+    );
+    const polling = createDocumentPolling({ reload, isVisible: () => true });
+
+    polling.setActive(true);
     await jest.advanceTimersByTimeAsync(3_000);
     expect(reload).toHaveBeenCalledTimes(1);
+    polling.handleVisibilityChange();
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    resolveReload();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(jest.getTimerCount()).toBe(1);
   });
 
   it('backs off failed reloads from 3 to 10 to 30 seconds and resets after success', async () => {
