@@ -19,6 +19,8 @@ public class TaskResponse {
     private String stage;
     private Integer progress;
     private String error;
+    private String callbackStatus;
+    private String callbackError;
     private Map<String, String> links;
 
     @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")

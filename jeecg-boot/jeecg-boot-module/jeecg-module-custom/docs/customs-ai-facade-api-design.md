@@ -237,9 +237,14 @@ Response:
   "status": "running",
   "stage": "extracting",
   "progress": 65,
-  "error": null
+  "error": null,
+  "callbackStatus": "pending",
+  "callbackError": null
 }
 ```
+
+`callbackStatus` transitions through `pending` and `success` (or a terminal callback failure state). A task owned by
+another customer is deliberately indistinguishable from a missing task and returns HTTP `404`.
 
 Task statuses:
 

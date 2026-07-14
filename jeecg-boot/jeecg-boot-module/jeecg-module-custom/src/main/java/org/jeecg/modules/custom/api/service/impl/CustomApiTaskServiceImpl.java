@@ -22,6 +22,7 @@ import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.entity.CustomMqInbox;
+import org.jeecg.modules.custom.api.exception.CustomApiNotFoundException;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.jeecg.modules.custom.api.service.ICustomCallbackDeliveryService;
 import org.jeecg.modules.custom.api.service.ICustomApiFileService;
@@ -473,7 +474,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 .eq(CustomApiTask::getAppId, app.getId())
                 .eq(CustomApiTask::getCustomerCode, app.getCustomerCode()), false);
         if (task == null) {
-            throw new JeecgBootException("task not found");
+            throw new CustomApiNotFoundException("task not found");
         }
         return task;
     }
@@ -491,6 +492,8 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 .setStage(task.getStage())
                 .setProgress(task.getProgress())
                 .setError(task.getErrorMessage())
+                .setCallbackStatus(task.getCallbackStatus())
+                .setCallbackError(task.getCallbackError())
                 .setCreatedAt(task.getCreatedAt())
                 .setStartedAt(task.getStartedAt())
                 .setFinishedAt(task.getFinishedAt())

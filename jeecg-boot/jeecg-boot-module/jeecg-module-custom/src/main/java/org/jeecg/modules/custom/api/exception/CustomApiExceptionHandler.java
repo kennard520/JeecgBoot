@@ -10,6 +10,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice(basePackages = "org.jeecg.modules.custom.api.controller")
 public class CustomApiExceptionHandler {
 
+    @ExceptionHandler(CustomApiNotFoundException.class)
+    public ResponseEntity<Result<?>> notFound(CustomApiNotFoundException error) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Result.error(HttpStatus.NOT_FOUND.value(), error.getMessage()));
+    }
+
     @ExceptionHandler(CustomApiConflictException.class)
     public ResponseEntity<Result<?>> conflict(CustomApiConflictException error) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
