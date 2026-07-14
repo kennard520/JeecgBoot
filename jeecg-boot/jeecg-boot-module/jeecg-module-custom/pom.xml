@@ -11,6 +11,10 @@
 
     <artifactId>jeecg-module-custom</artifactId>
 
+    <properties>
+        <skipTests>false</skipTests>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.jeecgframework.boot3</groupId>
@@ -21,5 +25,17 @@
             <artifactId>jeecg-boot-starter-rabbitmq</artifactId>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <skipTests>${skipTests}</skipTests>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 
 </project>
