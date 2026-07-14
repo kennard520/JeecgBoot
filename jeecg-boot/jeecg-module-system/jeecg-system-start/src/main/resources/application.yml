@@ -30,3 +30,6 @@ custom:
     internal-token: ${CUSTOM_API_INTERNAL_TOKEN:cit-internal-file-download-2026}
     internal-customer-code: ${CUSTOM_API_INTERNAL_CUSTOMER_CODE:INTERNAL}
     internal-company-code: ${CUSTOM_API_INTERNAL_COMPANY_CODE:CUSTOMS}
+    internal-download-ttl-seconds: ${CUSTOM_API_INTERNAL_DOWNLOAD_TTL_SECONDS:18000}
+    reconcile:
+      total-timeout-seconds: ${CUSTOM_API_TOTAL_TIMEOUT_SECONDS:14400}

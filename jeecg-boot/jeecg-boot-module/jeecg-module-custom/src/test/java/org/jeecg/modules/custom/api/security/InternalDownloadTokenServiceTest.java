@@ -42,11 +42,11 @@ class InternalDownloadTokenServiceTest {
     }
 
     @Test
-    void ttlMustCoverConfiguredBrokerQueueWindow() {
+    void ttlMustCoverConfiguredTaskWindow() {
         assertThatThrownBy(() -> new InternalDownloadTokenService(
                 "https://entry.example", "s".repeat(32), 300, 600, CLOCK))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("queue");
+                .hasMessageContaining("task window");
 
         InternalDownloadTokenService service = new InternalDownloadTokenService(
                 "https://entry.example", "s".repeat(32), 900, 600, CLOCK);

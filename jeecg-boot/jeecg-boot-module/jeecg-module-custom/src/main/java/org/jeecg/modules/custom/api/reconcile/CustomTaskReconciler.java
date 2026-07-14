@@ -29,7 +29,7 @@ public class CustomTaskReconciler {
             @Value("${custom.api.reconcile.batch-size:100}") int batchSize,
             @Value("${custom.api.reconcile.queued-timeout-seconds:600}") long queuedTimeoutSeconds,
             @Value("${custom.api.reconcile.heartbeat-timeout-seconds:600}") long heartbeatTimeoutSeconds,
-            @Value("${custom.api.reconcile.total-timeout-seconds:3600}") long totalTimeoutSeconds) {
+            @Value("${custom.api.reconcile.total-timeout-seconds:14400}") long totalTimeoutSeconds) {
         this(taskMapper, ticketService, batchSize, queuedTimeoutSeconds,
                 heartbeatTimeoutSeconds, totalTimeoutSeconds, Clock.systemDefaultZone());
     }

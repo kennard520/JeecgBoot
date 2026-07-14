@@ -470,6 +470,8 @@ custom.api.token-ttl-seconds=7200
 custom.api.upload-url-ttl-seconds=900
 custom.api.internal-base-url=https://<public-jeecg-host>/<public-prefix>
 custom.api.internal-token=<token for customs-ai file download>
+custom.api.internal-download-ttl-seconds=18000
+custom.api.reconcile.total-timeout-seconds=14400
 ```
 
 MQ configuration:

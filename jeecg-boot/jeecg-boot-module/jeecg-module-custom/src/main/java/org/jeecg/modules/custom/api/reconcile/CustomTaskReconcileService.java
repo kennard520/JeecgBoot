@@ -43,7 +43,7 @@ public class CustomTaskReconcileService {
             ICustomCallbackDeliveryService callbackDeliveryService,
             @Value("${custom.api.reconcile.queued-timeout-seconds:600}") long queuedTimeoutSeconds,
             @Value("${custom.api.reconcile.heartbeat-timeout-seconds:600}") long heartbeatTimeoutSeconds,
-            @Value("${custom.api.reconcile.total-timeout-seconds:3600}") long totalTimeoutSeconds,
+            @Value("${custom.api.reconcile.total-timeout-seconds:14400}") long totalTimeoutSeconds,
             @Value("${custom.api.reconcile.max-runs:3}") int maxRuns) {
         this(taskMapper, fileService, outboxService, documentService, callbackDeliveryService,
                 queuedTimeoutSeconds, heartbeatTimeoutSeconds, totalTimeoutSeconds, maxRuns,

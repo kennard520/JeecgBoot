@@ -28,9 +28,9 @@ public class InternalDownloadTokenService {
     public InternalDownloadTokenService(
             @Value("${custom.api.internal-base-url}") String internalBaseUrl,
             @Value("${custom.api.internal-download-secret}") String secret,
-            @Value("${custom.api.internal-download-ttl-seconds:7200}") long ttlSeconds,
-            @Value("${custom.api.reconcile.queued-timeout-seconds:600}") long queueWindowSeconds) {
-        this(internalBaseUrl, secret, ttlSeconds, queueWindowSeconds, Clock.systemUTC());
+            @Value("${custom.api.internal-download-ttl-seconds:18000}") long ttlSeconds,
+            @Value("${custom.api.reconcile.total-timeout-seconds:14400}") long taskWindowSeconds) {
+        this(internalBaseUrl, secret, ttlSeconds, taskWindowSeconds, Clock.systemUTC());
     }
 
     public InternalDownloadTokenService(String internalBaseUrl, String secret,
@@ -39,7 +39,7 @@ public class InternalDownloadTokenService {
     }
 
     public InternalDownloadTokenService(String internalBaseUrl, String secret,
-                                        long ttlSeconds, long queueWindowSeconds, Clock clock) {
+                                        long ttlSeconds, long taskWindowSeconds, Clock clock) {
         if (internalBaseUrl == null || internalBaseUrl.isBlank()) {
             throw new IllegalStateException("custom.api.internal-base-url is required");
         }
@@ -50,9 +50,9 @@ public class InternalDownloadTokenService {
         if (ttlSeconds < 1) {
             throw new IllegalStateException("custom.api.internal-download-ttl-seconds must be positive");
         }
-        if (queueWindowSeconds > 0 && ttlSeconds <= queueWindowSeconds) {
+        if (taskWindowSeconds > 0 && ttlSeconds <= taskWindowSeconds) {
             throw new IllegalStateException(
-                    "internal download TTL must exceed the configured broker queue window");
+                    "internal download TTL must exceed the configured task window");
         }
         this.internalBaseUrl = trimTrailingSlash(internalBaseUrl);
         this.secret = secret.getBytes(StandardCharsets.UTF_8);
