@@ -128,10 +128,10 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
         if (app == null || !app.isApiEnabled()) {
             throw new JeecgBootException("app is disabled or not found");
         }
+        rateLimiter.check(app, "token");
         if (!CustomApiCrypto.equalsHash(request.getAppSecret(), app.getAppSecretHash())) {
             throw new JeecgBootException("invalid app secret");
         }
-        rateLimiter.check(app, "token");
 
         String token = CustomApiCrypto.randomToken("cai_", 32);
         app.setAccessTokenHash(CustomApiCrypto.sha256(token));
