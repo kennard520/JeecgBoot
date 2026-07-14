@@ -3,6 +3,7 @@ package org.jeecg.modules.custom.api.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
 
 import java.time.LocalDateTime;
@@ -39,4 +40,11 @@ public interface CustomApiTaskMapper extends BaseMapper<CustomApiTask> {
             @Param("queuedCutoff") LocalDateTime queuedCutoff,
             @Param("heartbeatCutoff") LocalDateTime heartbeatCutoff,
             @Param("limit") int limit);
+
+    @Update("UPDATE CUSTOM_API_TASK SET CALLBACK_STATUS = #{status}, CALLBACK_ERROR = #{error} "
+            + "WHERE TASK_ID = #{taskId} AND NVL(CUSTOMS_AI_RUN_NO, 1) = #{runNo}")
+    int updateCallbackStatus(@Param("taskId") String taskId,
+                             @Param("runNo") Integer runNo,
+                             @Param("status") String status,
+                             @Param("error") String error);
 }

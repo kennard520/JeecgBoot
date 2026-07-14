@@ -10,6 +10,7 @@ import org.jeecg.modules.custom.api.entity.CustomMqOutbox;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.jeecg.modules.custom.api.mapper.CustomMqOutboxMapper;
 import org.jeecg.modules.custom.api.mq.OutboxClaimLostException;
+import org.jeecg.modules.custom.api.mq.StaleOutboxRunException;
 import org.jeecg.modules.custom.api.security.InternalDownloadTokenService;
 import org.jeecg.modules.custom.api.service.impl.CustomApiTaskServiceImpl;
 import org.jeecg.modules.custom.api.service.impl.CustomMqOutboxServiceImpl;
@@ -44,7 +45,7 @@ import static org.mockito.Mockito.when;
 class CustomMqOutboxServiceTest {
 
     @Test
-    void createsOnePendingOutboxWithStableInternalDownloadForTaskRun() throws Exception {
+    void createsOnePendingOutboxWithUnsignedStablePayloadTemplate() throws Exception {
         CustomMqOutboxMapper mapper = mock(CustomMqOutboxMapper.class);
         CustomMqOutboxServiceImpl service = new CustomMqOutboxServiceImpl(mapper, tokenService());
         doAnswer(invocation -> {
@@ -73,13 +74,45 @@ class CustomMqOutboxServiceTest {
         assertThat(payload.path("fileId").asText()).isEqualTo("file-1");
         assertThat(payload.path("fileSize").asLong()).isEqualTo(128L);
         assertThat(payload.path("sha256").asText()).isEqualTo("b".repeat(64));
-        assertThat(payload.path("downloadUrl").asText()).isEqualTo(
-                "https://smart-entry.citclub.org/jeecgboot/custom/api/internal/tasks/task-1/files/file-1/download"
-                        + "?runNo=1&expires=1784005500&signature="
-                        + payload.path("downloadUrl").asText().substring(
-                        payload.path("downloadUrl").asText().indexOf("signature=") + 10));
-        assertThat(payload.path("downloadUrl").asText()).contains("runNo=1", "expires=1784005500", "signature=");
+        assertThat(payload.has("downloadUrl")).isFalse();
         assertThat(payload.has("downloadHeaders")).isFalse();
+    }
+
+    @Test
+    void claimedPublishRefreshesDownloadGrantAndPersistsExactPayloadByToken() throws Exception {
+        CustomMqOutboxMapper mapper = mock(CustomMqOutboxMapper.class);
+        CustomMqOutboxServiceImpl service = new CustomMqOutboxServiceImpl(mapper, tokenService());
+        CustomMqOutbox event = new CustomMqOutbox().setId(11L).setEventId("request-1")
+                .setAggregateId("task-1").setAggregateVersion(1).setStatus(CustomMqOutbox.STATUS_SENDING)
+                .setClaimToken("claim-1").setPayloadJson("{\"legacy\":true}");
+        when(mapper.refreshPayload(eq(11L), eq("claim-1"), anyString(), any(LocalDateTime.class)))
+                .thenReturn(1);
+
+        CustomMqOutbox prepared = service.prepareForPublish(
+                event, "claim-1", task("task-1", "file-1", 1), file("file-1"));
+
+        JsonNode payload = JsonMapper.builder().build().readTree(prepared.getPayloadJson());
+        assertThat(payload.path("schemaVersion").asInt()).isEqualTo(2);
+        assertThat(payload.path("eventId").asText()).isEqualTo("request-1");
+        assertThat(payload.path("downloadUrl").asText())
+                .contains("runNo=1", "expires=1784005500", "signature=");
+        verify(mapper).refreshPayload(
+                eq(11L), eq("claim-1"), eq(prepared.getPayloadJson()), any(LocalDateTime.class));
+    }
+
+    @Test
+    void staleOutboxRunCannotBePreparedForPublish() {
+        CustomMqOutboxMapper mapper = mock(CustomMqOutboxMapper.class);
+        CustomMqOutboxServiceImpl service = new CustomMqOutboxServiceImpl(mapper, tokenService());
+        CustomMqOutbox event = new CustomMqOutbox().setId(11L).setEventId("request-1")
+                .setAggregateId("task-1").setAggregateVersion(1).setStatus(CustomMqOutbox.STATUS_SENDING);
+
+        assertThatThrownBy(() -> service.prepareForPublish(
+                event, "claim-1", task("task-1", "file-1", 2), file("file-1")))
+                .isInstanceOf(StaleOutboxRunException.class)
+                .hasMessageContaining("run");
+
+        verify(mapper, never()).refreshPayload(any(), any(), any(), any());
     }
 
     @Test
@@ -164,10 +197,13 @@ class CustomMqOutboxServiceTest {
     void stalePublisherCannotMarkReclaimedEventSent() {
         CustomMqOutboxMapper mapper = mock(CustomMqOutboxMapper.class);
         CustomMqOutboxServiceImpl service = new CustomMqOutboxServiceImpl(mapper, tokenService());
-        when(mapper.markSent(eq(12L), eq("old-token"), any(LocalDateTime.class)))
+        CustomMqOutbox event = new CustomMqOutbox().setId(12L)
+                .setAggregateId("task-1").setAggregateVersion(1);
+        when(mapper.markSent(eq(12L), eq("old-token"), eq("task-1"), eq(1),
+                any(LocalDateTime.class)))
                 .thenReturn(0);
 
-        assertThatThrownBy(() -> service.markSent(12L, "old-token"))
+        assertThatThrownBy(() -> service.markSent(event, "old-token"))
                 .isInstanceOf(OutboxClaimLostException.class);
     }
 
@@ -189,6 +225,7 @@ class CustomMqOutboxServiceTest {
                 eq(1), eq(null), eq("broker unavailable"), any(LocalDateTime.class)))
                 .thenReturn(1);
         when(taskMapper.selectByTaskIdForUpdate("task-1")).thenReturn(task);
+        when(taskMapper.updateById(task)).thenReturn(1);
 
         service.reschedule(event, "claim-1", "broker unavailable", 1, 2L, 300L);
 
@@ -206,24 +243,58 @@ class CustomMqOutboxServiceTest {
         CustomApiTaskMapper taskMapper = mock(CustomApiTaskMapper.class);
         IDocumentService documentService = mock(IDocumentService.class);
         ICustomCallbackDeliveryService callbackService = mock(ICustomCallbackDeliveryService.class);
+        ICustomApiFileService fileService = mock(ICustomApiFileService.class);
         CustomMqOutboxServiceImpl service = new CustomMqOutboxServiceImpl(
-                mapper, tokenService(), taskMapper, documentService, callbackService);
+                mapper, tokenService(), taskMapper, documentService, callbackService, fileService);
         CustomMqOutbox dead = new CustomMqOutbox().setId(12L).setEventId("event-1")
                 .setAggregateId("task-1").setAggregateVersion(1)
                 .setStatus(CustomMqOutbox.STATUS_DEAD).setAttemptCount(8);
         CustomApiTask task = task("task-1", "file-1", 1).setId(21L)
                 .setStatus(CustomApiTask.STATUS_FAILED).setErrorCode("OUTBOX_DEAD")
                 .setErrorMessage("broker unavailable");
-        when(mapper.selectOne(any())).thenReturn(dead);
-        when(mapper.replayDead(eq(12L), any(LocalDateTime.class))).thenReturn(1);
+        when(mapper.selectOne(any())).thenReturn(dead, null);
+        when(mapper.markReplayed(eq(12L), eq(2), any(LocalDateTime.class))).thenReturn(1);
+        doAnswer(invocation -> {
+            ((CustomMqOutbox) invocation.getArgument(0)).setId(13L);
+            return 1;
+        }).when(mapper).insert(any(CustomMqOutbox.class));
         when(taskMapper.selectByTaskIdForUpdate("task-1")).thenReturn(task);
+        when(taskMapper.updateById(task)).thenReturn(1);
+        when(fileService.getOne(any(), eq(false))).thenReturn(file("file-1"));
 
         CustomMqOutbox replayed = service.replayDead("event-1");
 
         assertThat(replayed.getStatus()).isEqualTo(CustomMqOutbox.STATUS_PENDING);
         assertThat(replayed.getAttemptCount()).isZero();
+        assertThat(replayed.getAggregateVersion()).isEqualTo(2);
+        assertThat(dead.getStatus()).isEqualTo(CustomMqOutbox.STATUS_REPLAYED);
         assertThat(task.getStatus()).isEqualTo(CustomApiTask.STATUS_QUEUED);
+        assertThat(task.getCustomsAiRunNo()).isEqualTo(2);
         verify(documentService).markParseQueued("task-1");
+    }
+
+    @Test
+    void deadOutboxFromOlderRunCannotFailCurrentTaskAggregate() {
+        CustomMqOutboxMapper mapper = mock(CustomMqOutboxMapper.class);
+        CustomApiTaskMapper taskMapper = mock(CustomApiTaskMapper.class);
+        IDocumentService documentService = mock(IDocumentService.class);
+        ICustomCallbackDeliveryService callbackService = mock(ICustomCallbackDeliveryService.class);
+        CustomMqOutboxServiceImpl service = new CustomMqOutboxServiceImpl(
+                mapper, tokenService(), taskMapper, documentService, callbackService);
+        CustomMqOutbox event = new CustomMqOutbox().setId(12L).setEventId("event-1")
+                .setAggregateId("task-1").setAggregateVersion(1).setAttemptCount(0)
+                .setStatus(CustomMqOutbox.STATUS_SENDING).setClaimToken("claim-1");
+        CustomApiTask current = task("task-1", "file-1", 2);
+        when(mapper.reschedule(eq(12L), eq("claim-1"), eq(CustomMqOutbox.STATUS_DEAD),
+                eq(1), eq(null), anyString(), any(LocalDateTime.class))).thenReturn(1);
+        when(taskMapper.selectByTaskIdForUpdate("task-1")).thenReturn(current);
+
+        service.reschedule(event, "claim-1", "broker unavailable", 1, 2L, 300L);
+
+        assertThat(current.getStatus()).isEqualTo(CustomApiTask.STATUS_QUEUED);
+        verify(taskMapper, never()).updateById(current);
+        verify(documentService, never()).failParse(anyString(), anyString());
+        verify(callbackService, never()).enqueueTerminal(any(), any(), any(), any(), any());
     }
 
     private CustomApiTask task(String taskId, String fileId, int runNo) {

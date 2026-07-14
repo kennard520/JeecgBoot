@@ -13,14 +13,17 @@ public interface ICustomCallbackDeliveryService extends IService<CustomCallbackD
 
     List<CustomCallbackDelivery> findDue(int limit);
 
-    boolean claim(Long id);
+    String claim(Long id, String claimedBy);
 
-    void markSucceeded(CustomCallbackDelivery delivery, int httpStatus);
+    void markSucceeded(CustomCallbackDelivery delivery, String claimToken, int httpStatus);
 
-    void scheduleRetry(CustomCallbackDelivery delivery, Integer httpStatus,
+    void scheduleRetry(CustomCallbackDelivery delivery, String claimToken, Integer httpStatus,
                        String error, Duration delay);
 
-    void markPermanentFailure(CustomCallbackDelivery delivery, Integer httpStatus, String error);
+    void markPermanentFailure(CustomCallbackDelivery delivery, String claimToken,
+                              Integer httpStatus, String error);
 
     void releaseStaleClaims(long claimTimeoutSeconds);
+
+    CustomCallbackDelivery replayDead(String deliveryId);
 }

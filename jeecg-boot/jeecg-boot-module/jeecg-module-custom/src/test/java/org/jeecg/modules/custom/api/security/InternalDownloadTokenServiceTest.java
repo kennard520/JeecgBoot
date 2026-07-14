@@ -42,6 +42,19 @@ class InternalDownloadTokenServiceTest {
     }
 
     @Test
+    void ttlMustCoverConfiguredBrokerQueueWindow() {
+        assertThatThrownBy(() -> new InternalDownloadTokenService(
+                "https://entry.example", "s".repeat(32), 300, 600, CLOCK))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("queue");
+
+        InternalDownloadTokenService service = new InternalDownloadTokenService(
+                "https://entry.example", "s".repeat(32), 900, 600, CLOCK);
+        assertThat(service.issue("task-1", "file-1", 1).expiresAt())
+                .isEqualTo(1784006100L);
+    }
+
+    @Test
     void rejectsExpiredGrantAsUnauthorized() {
         InternalDownloadTokenService issuer = service();
         InternalDownloadTokenService.DownloadGrant grant =

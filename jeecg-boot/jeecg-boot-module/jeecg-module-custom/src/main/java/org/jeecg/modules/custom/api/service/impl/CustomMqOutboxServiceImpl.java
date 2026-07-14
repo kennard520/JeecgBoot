@@ -14,6 +14,7 @@ import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.jeecg.modules.custom.api.mapper.CustomMqOutboxMapper;
 import org.jeecg.modules.custom.api.mq.CustomApiMqConstant;
 import org.jeecg.modules.custom.api.mq.OutboxClaimLostException;
+import org.jeecg.modules.custom.api.mq.StaleOutboxRunException;
 import org.jeecg.modules.custom.api.security.InternalDownloadTokenService;
 import org.jeecg.modules.custom.api.service.ICustomCallbackDeliveryService;
 import org.jeecg.modules.custom.api.service.ICustomMqOutboxService;
@@ -45,12 +46,13 @@ public class CustomMqOutboxServiceImpl
     private final CustomApiTaskMapper taskMapper;
     private final IDocumentService documentService;
     private final ICustomCallbackDeliveryService callbackDeliveryService;
+    private final org.jeecg.modules.custom.api.service.ICustomApiFileService fileService;
     private final ObjectMapper objectMapper = JsonMapper.builder().build();
 
     public CustomMqOutboxServiceImpl(
             CustomMqOutboxMapper outboxMapper,
             InternalDownloadTokenService downloadTokenService) {
-        this(outboxMapper, downloadTokenService, null, null, null);
+        this(outboxMapper, downloadTokenService, null, null, null, null);
     }
 
     @Autowired
@@ -59,12 +61,24 @@ public class CustomMqOutboxServiceImpl
             InternalDownloadTokenService downloadTokenService,
             CustomApiTaskMapper taskMapper,
             IDocumentService documentService,
-            ICustomCallbackDeliveryService callbackDeliveryService) {
+            ICustomCallbackDeliveryService callbackDeliveryService,
+            org.jeecg.modules.custom.api.service.ICustomApiFileService fileService) {
         this.outboxMapper = outboxMapper;
         this.downloadTokenService = downloadTokenService;
         this.taskMapper = taskMapper;
         this.documentService = documentService;
         this.callbackDeliveryService = callbackDeliveryService;
+        this.fileService = fileService;
+    }
+
+    public CustomMqOutboxServiceImpl(
+            CustomMqOutboxMapper outboxMapper,
+            InternalDownloadTokenService downloadTokenService,
+            CustomApiTaskMapper taskMapper,
+            IDocumentService documentService,
+            ICustomCallbackDeliveryService callbackDeliveryService) {
+        this(outboxMapper, downloadTokenService, taskMapper, documentService,
+                callbackDeliveryService, null);
     }
 
     @Override
@@ -86,7 +100,7 @@ public class CustomMqOutboxServiceImpl
                 .setEventType(EVENT_TYPE_PARSE_REQUESTED)
                 .setExchangeName(CustomApiMqConstant.PARSE_REQUEST_EXCHANGE)
                 .setRoutingKey(task.getCompanyCode().trim())
-                .setPayloadJson(buildPayload(eventId, task, file, runNo))
+                .setPayloadJson(buildPayload(eventId, task, file, runNo, false))
                 .setStatus(CustomMqOutbox.STATUS_PENDING)
                 .setAttemptCount(0)
                 .setNextAttemptAt(now)
@@ -127,9 +141,34 @@ public class CustomMqOutboxServiceImpl
     }
 
     @Override
-    public void markSent(Long id, String claimToken) {
-        if (id == null || claimToken == null
-                || outboxMapper.markSent(id, claimToken, LocalDateTime.now()) != 1) {
+    public CustomMqOutbox prepareForPublish(CustomMqOutbox event, String claimToken,
+                                            CustomApiTask task, CustomApiFile file) {
+        if (event == null || event.getId() == null || claimToken == null || claimToken.isBlank()
+                || !CustomMqOutbox.STATUS_SENDING.equals(event.getStatus())) {
+            throw new OutboxClaimLostException("outbox claim is required before payload refresh");
+        }
+        int currentRun = task == null || task.getCustomsAiRunNo() == null
+                ? 1 : task.getCustomsAiRunNo();
+        if (task == null || !event.getAggregateId().equals(task.getTaskId())
+                || event.getAggregateVersion() == null
+                || event.getAggregateVersion() != currentRun) {
+            throw new StaleOutboxRunException("outbox aggregate run is no longer current");
+        }
+        validateRequest(task, file, currentRun);
+        String payload = buildPayload(event.getEventId(), task, file, currentRun, true);
+        LocalDateTime now = LocalDateTime.now();
+        if (outboxMapper.refreshPayload(event.getId(), claimToken, payload, now) != 1) {
+            throw new OutboxClaimLostException("outbox claim was lost before payload refresh");
+        }
+        event.setPayloadJson(payload).setUpdatedAt(now);
+        return event;
+    }
+
+    @Override
+    public void markSent(CustomMqOutbox event, String claimToken) {
+        if (event == null || event.getId() == null || claimToken == null
+                || outboxMapper.markSent(event.getId(), claimToken,
+                event.getAggregateId(), event.getAggregateVersion(), LocalDateTime.now()) != 1) {
             throw new OutboxClaimLostException("outbox publisher claim was lost before confirm");
         }
     }
@@ -180,40 +219,62 @@ public class CustomMqOutboxServiceImpl
         if (event == null || !CustomMqOutbox.STATUS_DEAD.equals(event.getStatus())) {
             throw new JeecgBootException("only a dead outbox event can be replayed");
         }
-        LocalDateTime now = LocalDateTime.now();
-        if (outboxMapper.replayDead(event.getId(), now) != 1) {
-            throw new JeecgBootException("outbox event changed before replay");
-        }
         CustomApiTask task = requireTaskMapper().selectByTaskIdForUpdate(event.getAggregateId());
         if (task == null || !CustomApiTask.STATUS_FAILED.equals(task.getStatus())
                 || !"OUTBOX_DEAD".equals(task.getErrorCode())) {
             throw new JeecgBootException("task is not replayable after outbox failure");
         }
+        int currentRun = task.getCustomsAiRunNo() == null ? 1 : task.getCustomsAiRunNo();
+        if (event.getAggregateVersion() == null || event.getAggregateVersion() != currentRun) {
+            throw new JeecgBootException("outbox replay run is no longer current");
+        }
+        CustomApiFile file = requireFileService().getOne(new LambdaQueryWrapper<CustomApiFile>()
+                .eq(CustomApiFile::getFileId, task.getFileId()), false);
+        if (file == null || !CustomApiFile.STATUS_UPLOADED.equals(file.getStatus())) {
+            throw new JeecgBootException("verified parse file is unavailable for replay");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int nextRun = currentRun + 1;
+        if (outboxMapper.markReplayed(event.getId(), nextRun, now) != 1) {
+            throw new JeecgBootException("outbox event changed before replay");
+        }
         task.setStatus(CustomApiTask.STATUS_QUEUED)
                 .setStage("replay_queued")
                 .setProgress(0)
+                .setCustomsAiRunNo(nextRun)
                 .setQueuedAt(now)
+                .setLastHeartbeatAt(null)
+                .setStartedAt(null)
                 .setFinishedAt(null)
                 .setErrorCode(null)
-                .setErrorMessage(null);
-        requireTaskMapper().updateById(task);
+                .setErrorMessage(null)
+                .setCallbackStatus(null)
+                .setCallbackError(null);
+        if (requireTaskMapper().updateById(task) != 1) {
+            throw new JeecgBootException("task changed before outbox replay");
+        }
         requireDocumentService().markParseQueued(task.getTaskId());
-        event.setStatus(CustomMqOutbox.STATUS_PENDING)
-                .setAttemptCount(0)
-                .setNextAttemptAt(now)
-                .setClaimedAt(null)
-                .setClaimToken(null)
-                .setClaimedBy(null)
-                .setSentAt(null)
-                .setLastError(null)
+        event.setStatus(CustomMqOutbox.STATUS_REPLAYED)
+                .setClaimedAt(null).setClaimToken(null).setClaimedBy(null)
+                .setNextAttemptAt(null).setLastError("replayed as run " + nextRun)
                 .setUpdatedAt(now);
-        return event;
+        CustomMqOutbox replacement = enqueueParseTask(task, file, nextRun);
+        log.warn("CUSTOM_MQ_OUTBOX_REPLAY oldEventId={}, taskId={}, oldRun={}, newRun={}, "
+                        + "newEventId={}", event.getEventId(), task.getTaskId(), currentRun,
+                nextRun, replacement.getEventId());
+        return replacement;
     }
 
     private void failAggregate(CustomMqOutbox event, String error, LocalDateTime now) {
         CustomApiTask task = requireTaskMapper().selectByTaskIdForUpdate(event.getAggregateId());
         if (task == null) {
             throw new JeecgBootException("outbox task not found: " + event.getAggregateId());
+        }
+        int currentRun = task.getCustomsAiRunNo() == null ? 1 : task.getCustomsAiRunNo();
+        if (event.getAggregateVersion() == null || event.getAggregateVersion() != currentRun) {
+            log.warn("Ignore stale DEAD outbox aggregate transition, eventId={}, eventRun={}, currentRun={}",
+                    event.getEventId(), event.getAggregateVersion(), currentRun);
+            return;
         }
         if (isTerminal(task.getStatus())) {
             return;
@@ -227,7 +288,9 @@ public class CustomMqOutboxServiceImpl
         if (shouldCallback(task)) {
             task.setCallbackStatus("pending").setCallbackError(null);
         }
-        requireTaskMapper().updateById(task);
+        if (requireTaskMapper().updateById(task) != 1) {
+            throw new JeecgBootException("task changed while failing dead outbox aggregate");
+        }
         requireDocumentService().failParse(task.getTaskId(), error);
         if (shouldCallback(task)) {
             requireCallbackService().enqueueTerminal(
@@ -268,6 +331,13 @@ public class CustomMqOutboxServiceImpl
         return callbackDeliveryService;
     }
 
+    private org.jeecg.modules.custom.api.service.ICustomApiFileService requireFileService() {
+        if (fileService == null) {
+            throw new IllegalStateException("file service is required for outbox replay");
+        }
+        return fileService;
+    }
+
     private CustomMqOutbox findAggregate(String taskId, int runNo) {
         return outboxMapper.selectOne(new LambdaQueryWrapper<CustomMqOutbox>()
                 .eq(CustomMqOutbox::getAggregateType, AGGREGATE_TYPE_TASK)
@@ -276,7 +346,8 @@ public class CustomMqOutboxServiceImpl
                 .eq(CustomMqOutbox::getEventType, EVENT_TYPE_PARSE_REQUESTED));
     }
 
-    private String buildPayload(String eventId, CustomApiTask task, CustomApiFile file, int runNo) {
+    private String buildPayload(String eventId, CustomApiTask task, CustomApiFile file,
+                                int runNo, boolean includeDownloadGrant) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("eventId", eventId);
         body.put("eventType", EVENT_TYPE_PARSE_REQUESTED);
@@ -295,8 +366,10 @@ public class CustomMqOutboxServiceImpl
         body.put("contentType", file.getContentType());
         body.put("fileSize", file.getActualFileSize());
         body.put("sha256", file.getActualSha256().trim().toLowerCase(Locale.ROOT));
-        body.put("downloadUrl", downloadTokenService.issue(
-                task.getTaskId(), file.getFileId(), runNo).url());
+        if (includeDownloadGrant) {
+            body.put("downloadUrl", downloadTokenService.issue(
+                    task.getTaskId(), file.getFileId(), runNo).url());
+        }
         if (task.getMetadataJson() != null && !task.getMetadataJson().isBlank()) {
             try {
                 body.put("metadata", objectMapper.readTree(task.getMetadataJson()));

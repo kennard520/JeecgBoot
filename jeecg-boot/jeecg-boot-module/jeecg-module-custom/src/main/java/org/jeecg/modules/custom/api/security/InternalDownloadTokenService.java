@@ -28,12 +28,18 @@ public class InternalDownloadTokenService {
     public InternalDownloadTokenService(
             @Value("${custom.api.internal-base-url}") String internalBaseUrl,
             @Value("${custom.api.internal-download-secret}") String secret,
-            @Value("${custom.api.internal-download-ttl-seconds:300}") long ttlSeconds) {
-        this(internalBaseUrl, secret, ttlSeconds, Clock.systemUTC());
+            @Value("${custom.api.internal-download-ttl-seconds:7200}") long ttlSeconds,
+            @Value("${custom.api.reconcile.queued-timeout-seconds:600}") long queueWindowSeconds) {
+        this(internalBaseUrl, secret, ttlSeconds, queueWindowSeconds, Clock.systemUTC());
     }
 
     public InternalDownloadTokenService(String internalBaseUrl, String secret,
                                         long ttlSeconds, Clock clock) {
+        this(internalBaseUrl, secret, ttlSeconds, 0L, clock);
+    }
+
+    public InternalDownloadTokenService(String internalBaseUrl, String secret,
+                                        long ttlSeconds, long queueWindowSeconds, Clock clock) {
         if (internalBaseUrl == null || internalBaseUrl.isBlank()) {
             throw new IllegalStateException("custom.api.internal-base-url is required");
         }
@@ -43,6 +49,10 @@ public class InternalDownloadTokenService {
         }
         if (ttlSeconds < 1) {
             throw new IllegalStateException("custom.api.internal-download-ttl-seconds must be positive");
+        }
+        if (queueWindowSeconds > 0 && ttlSeconds <= queueWindowSeconds) {
+            throw new IllegalStateException(
+                    "internal download TTL must exceed the configured broker queue window");
         }
         this.internalBaseUrl = trimTrailingSlash(internalBaseUrl);
         this.secret = secret.getBytes(StandardCharsets.UTF_8);

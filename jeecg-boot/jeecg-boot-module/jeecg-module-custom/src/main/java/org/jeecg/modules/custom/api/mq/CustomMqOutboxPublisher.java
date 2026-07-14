@@ -54,7 +54,8 @@ public class CustomMqOutboxPublisher {
                 + "-" + UUID.randomUUID();
     }
 
-    @Scheduled(fixedDelayString = "${custom.api.outbox.publish-interval-ms:1000}")
+    @Scheduled(fixedDelayString = "${custom.api.outbox.publish-interval-ms:1000}",
+            scheduler = "customReliabilityTaskScheduler")
     public void publishPending() {
         outboxService.releaseStaleClaims(claimTimeoutSeconds);
         for (CustomMqOutbox event : outboxService.findPublishable(batchSize)) {
@@ -75,8 +76,17 @@ public class CustomMqOutboxPublisher {
                 if (file == null) {
                     throw new IllegalStateException("file not found: " + task.getFileId());
                 }
+                event = outboxService.prepareForPublish(event, claimToken, task, file);
                 producer.publishConfirmed(task, file, event);
-                outboxService.markSent(event.getId(), claimToken);
+                outboxService.markSent(event, claimToken);
+            } catch (StaleOutboxRunException staleRun) {
+                log.warn("Dead-letter stale custom MQ outbox, eventId={}", event.getEventId());
+                try {
+                    outboxService.reschedule(event, claimToken, message(staleRun),
+                            1, baseDelaySeconds, maxDelaySeconds);
+                } catch (OutboxClaimLostException claimLost) {
+                    log.info("Skip stale custom MQ outbox dead-letter, eventId={}", event.getEventId());
+                }
             } catch (OutboxClaimLostException claimLost) {
                 log.info("Skip stale custom MQ outbox completion, eventId={}", event.getEventId());
             } catch (Exception e) {

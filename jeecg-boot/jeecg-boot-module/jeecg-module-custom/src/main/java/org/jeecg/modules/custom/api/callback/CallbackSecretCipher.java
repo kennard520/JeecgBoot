@@ -56,7 +56,8 @@ public class CallbackSecretCipher {
     public String decrypt(String ciphertext, String keyVersion) {
         SecretKeySpec key = keys.get(keyVersion);
         if (key == null) {
-            throw new IllegalStateException("unknown callback key version: " + keyVersion);
+            throw new CallbackConfigurationException(
+                    "unknown callback key version: " + keyVersion);
         }
         try {
             byte[] envelope = Base64.getDecoder().decode(ciphertext);
@@ -69,7 +70,7 @@ public class CallbackSecretCipher {
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_BITS, iv));
             return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new IllegalStateException("decrypt callback secret failed", e);
+            throw new IllegalArgumentException("invalid callback secret ciphertext", e);
         }
     }
 

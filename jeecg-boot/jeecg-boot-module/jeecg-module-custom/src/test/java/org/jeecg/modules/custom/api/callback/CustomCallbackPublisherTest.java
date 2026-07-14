@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -43,7 +44,7 @@ class CustomCallbackPublisherTest {
         assertThat(headers.getValue().get("X-CustomsAI-Timestamp")).isEqualTo("1784023200");
         assertThat(headers.getValue().get("X-CustomsAI-Signature"))
                 .isEqualTo("v1=c2332d4a52bc2189c799a5ef4d092eaf6e7c2259c7c2e94f787a05499f0978c5");
-        verify(fixture.service).markSucceeded(fixture.delivery, 204);
+        verify(fixture.service).markSucceeded(fixture.delivery, "claim-1", 204);
     }
 
     @Test
@@ -51,13 +52,13 @@ class CustomCallbackPublisherTest {
         Fixture serverError = fixture(new CallbackHttpResponse(500, Map.of(), "temporary"));
         serverError.publisher.publishPending();
         verify(serverError.service).scheduleRetry(
-                eq(serverError.delivery), eq(500), any(), eq(Duration.ofMinutes(1)));
+                eq(serverError.delivery), eq("claim-1"), eq(500), any(), eq(Duration.ofMinutes(1)));
 
         Fixture throttled = fixture(new CallbackHttpResponse(
                 429, Map.of("Retry-After", List.of("120")), "slow down"));
         throttled.publisher.publishPending();
         verify(throttled.service).scheduleRetry(
-                eq(throttled.delivery), eq(429), any(), eq(Duration.ofSeconds(120)));
+                eq(throttled.delivery), eq("claim-1"), eq(429), any(), eq(Duration.ofSeconds(120)));
     }
 
     @Test
@@ -66,8 +67,9 @@ class CustomCallbackPublisherTest {
 
         fixture.publisher.publishPending();
 
-        verify(fixture.service).markPermanentFailure(eq(fixture.delivery), eq(400), any());
-        verify(fixture.service, never()).scheduleRetry(any(), anyInt(), any(), any());
+        verify(fixture.service).markPermanentFailure(
+                eq(fixture.delivery), eq("claim-1"), eq(400), any());
+        verify(fixture.service, never()).scheduleRetry(any(), any(), anyInt(), any(), any());
     }
 
     @Test
@@ -81,7 +83,34 @@ class CustomCallbackPublisherTest {
         fixture.publisher.publishPending();
 
         verify(fixture.transport, never()).send(any(), any(), any());
-        verify(fixture.service).markPermanentFailure(eq(fixture.delivery), eq(null), any());
+        verify(fixture.service).markPermanentFailure(
+                eq(fixture.delivery), eq("claim-1"), eq(null), any());
+    }
+
+    @Test
+    void temporaryDnsFailureSchedulesRetryInsteadOfPermanentFailure() throws Exception {
+        CallbackUrlPolicy policy = new CallbackUrlPolicy(true, host -> {
+            throw new UnknownHostException("dns unavailable");
+        }, Set.of());
+        Fixture fixture = fixture(new CallbackHttpResponse(200, Map.of(), ""), policy);
+
+        fixture.publisher.publishPending();
+
+        verify(fixture.service).scheduleRetry(
+                eq(fixture.delivery), eq("claim-1"), eq(null), any(), eq(Duration.ofMinutes(1)));
+        verify(fixture.service, never()).markPermanentFailure(any(), any(), any(), any());
+    }
+
+    @Test
+    void unavailableHistoricalCallbackKeySchedulesRetry() throws Exception {
+        Fixture fixture = fixture(new CallbackHttpResponse(200, Map.of(), ""));
+        fixture.delivery.setSecretKeyVersion("retired-key");
+
+        fixture.publisher.publishPending();
+
+        verify(fixture.service).scheduleRetry(
+                eq(fixture.delivery), eq("claim-1"), eq(null), any(), eq(Duration.ofMinutes(1)));
+        verify(fixture.service, never()).markPermanentFailure(any(), any(), any(), any());
     }
 
     private Fixture fixture(CallbackHttpResponse response) throws Exception {
@@ -103,11 +132,11 @@ class CustomCallbackPublisherTest {
                 .setPayloadJson("{\"deliveryId\":\"delivery-1\",\"status\":\"succeeded\"}")
                 .setStatus(CustomCallbackDelivery.STATUS_PENDING).setAttemptCount(0);
         when(service.findDue(20)).thenReturn(List.of(delivery));
-        when(service.claim(1L)).thenReturn(true);
+        when(service.claim(1L, "callback-test")).thenReturn("claim-1");
         when(transport.send(any(), any(), any())).thenReturn(response);
         Clock clock = Clock.fixed(Instant.parse("2026-07-14T10:00:00Z"), ZoneOffset.UTC);
         CustomCallbackPublisher publisher = new CustomCallbackPublisher(
-                service, policy, cipher, transport, clock, 20, 300L);
+                service, policy, cipher, transport, clock, 20, 300L, "callback-test");
         return new Fixture(service, transport, delivery, publisher);
     }
 

@@ -14,7 +14,10 @@ public interface ICustomMqOutboxService extends IService<CustomMqOutbox> {
 
     String claim(Long id, String claimedBy);
 
-    void markSent(Long id, String claimToken);
+    CustomMqOutbox prepareForPublish(CustomMqOutbox event, String claimToken,
+                                     CustomApiTask task, CustomApiFile file);
+
+    void markSent(CustomMqOutbox event, String claimToken);
 
     void reschedule(CustomMqOutbox event, String claimToken, String error, int maxAttempts,
                     long baseDelaySeconds, long maxDelaySeconds);

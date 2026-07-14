@@ -22,6 +22,7 @@ public class CustomMqOutbox implements Serializable {
     public static final String STATUS_SENDING = "SENDING";
     public static final String STATUS_SENT = "SENT";
     public static final String STATUS_DEAD = "DEAD";
+    public static final String STATUS_REPLAYED = "REPLAYED";
 
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;

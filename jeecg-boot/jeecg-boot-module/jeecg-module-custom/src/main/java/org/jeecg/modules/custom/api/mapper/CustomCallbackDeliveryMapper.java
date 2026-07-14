@@ -9,22 +9,31 @@ import java.time.LocalDateTime;
 
 public interface CustomCallbackDeliveryMapper extends BaseMapper<CustomCallbackDelivery> {
 
-    @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'SENDING', CLAIMED_AT = #{now}, "
+    @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'SENDING', CLAIM_TOKEN = #{claimToken}, "
+            + "CLAIMED_BY = #{claimedBy}, CLAIMED_AT = #{now}, "
             + "LAST_ATTEMPT_AT = #{now}, UPDATED_AT = #{now} WHERE ID = #{id} AND STATUS = 'PENDING' "
             + "AND (NEXT_ATTEMPT_AT IS NULL OR NEXT_ATTEMPT_AT <= #{now})")
-    int claim(@Param("id") Long id, @Param("now") LocalDateTime now);
+    int claim(@Param("id") Long id,
+              @Param("claimToken") String claimToken,
+              @Param("claimedBy") String claimedBy,
+              @Param("now") LocalDateTime now);
 
     @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'SUCCEEDED', HTTP_STATUS = #{httpStatus}, "
-            + "CLAIMED_AT = NULL, DELIVERED_AT = #{now}, LAST_ERROR = NULL, UPDATED_AT = #{now} "
-            + "WHERE ID = #{id} AND STATUS = 'SENDING'")
+            + "CLAIMED_AT = NULL, CLAIM_TOKEN = NULL, CLAIMED_BY = NULL, "
+            + "DELIVERED_AT = #{now}, LAST_ERROR = NULL, UPDATED_AT = #{now} "
+            + "WHERE ID = #{id} AND STATUS = 'SENDING' AND CLAIM_TOKEN = #{claimToken}")
     int markSucceeded(@Param("id") Long id,
+                      @Param("claimToken") String claimToken,
                       @Param("httpStatus") int httpStatus,
                       @Param("now") LocalDateTime now);
 
     @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'PENDING', ATTEMPT_COUNT = #{attemptCount}, "
-            + "NEXT_ATTEMPT_AT = #{nextAttemptAt}, CLAIMED_AT = NULL, HTTP_STATUS = #{httpStatus}, "
-            + "LAST_ERROR = #{lastError}, UPDATED_AT = #{now} WHERE ID = #{id} AND STATUS = 'SENDING'")
+            + "NEXT_ATTEMPT_AT = #{nextAttemptAt}, CLAIMED_AT = NULL, CLAIM_TOKEN = NULL, "
+            + "CLAIMED_BY = NULL, HTTP_STATUS = #{httpStatus}, LAST_ERROR = #{lastError}, "
+            + "UPDATED_AT = #{now} WHERE ID = #{id} AND STATUS = 'SENDING' "
+            + "AND CLAIM_TOKEN = #{claimToken}")
     int scheduleRetry(@Param("id") Long id,
+                      @Param("claimToken") String claimToken,
                       @Param("attemptCount") int attemptCount,
                       @Param("nextAttemptAt") LocalDateTime nextAttemptAt,
                       @Param("httpStatus") Integer httpStatus,
@@ -32,16 +41,25 @@ public interface CustomCallbackDeliveryMapper extends BaseMapper<CustomCallbackD
                       @Param("now") LocalDateTime now);
 
     @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'DEAD', ATTEMPT_COUNT = #{attemptCount}, "
-            + "NEXT_ATTEMPT_AT = NULL, CLAIMED_AT = NULL, HTTP_STATUS = #{httpStatus}, "
-            + "LAST_ERROR = #{lastError}, UPDATED_AT = #{now} WHERE ID = #{id} AND STATUS = 'SENDING'")
+            + "NEXT_ATTEMPT_AT = NULL, CLAIMED_AT = NULL, CLAIM_TOKEN = NULL, CLAIMED_BY = NULL, "
+            + "HTTP_STATUS = #{httpStatus}, LAST_ERROR = #{lastError}, UPDATED_AT = #{now} "
+            + "WHERE ID = #{id} AND STATUS = 'SENDING' AND CLAIM_TOKEN = #{claimToken}")
     int markPermanentFailure(@Param("id") Long id,
+                             @Param("claimToken") String claimToken,
                              @Param("attemptCount") int attemptCount,
                              @Param("httpStatus") Integer httpStatus,
                              @Param("lastError") String lastError,
                              @Param("now") LocalDateTime now);
 
     @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'PENDING', CLAIMED_AT = NULL, "
+            + "CLAIM_TOKEN = NULL, CLAIMED_BY = NULL, "
             + "NEXT_ATTEMPT_AT = #{now}, LAST_ERROR = 'stale callback claim', UPDATED_AT = #{now} "
             + "WHERE STATUS = 'SENDING' AND CLAIMED_AT < #{cutoff}")
     int releaseStaleClaims(@Param("cutoff") LocalDateTime cutoff, @Param("now") LocalDateTime now);
+
+    @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'PENDING', ATTEMPT_COUNT = 0, "
+            + "NEXT_ATTEMPT_AT = #{now}, CLAIMED_AT = NULL, CLAIM_TOKEN = NULL, CLAIMED_BY = NULL, "
+            + "DELIVERED_AT = NULL, HTTP_STATUS = NULL, LAST_ERROR = NULL, UPDATED_AT = #{now} "
+            + "WHERE ID = #{id} AND STATUS = 'DEAD'")
+    int replayDead(@Param("id") Long id, @Param("now") LocalDateTime now);
 }

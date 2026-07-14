@@ -2,6 +2,7 @@ package org.jeecg.modules.custom.api.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.extern.slf4j.Slf4j;
 import org.jeecg.modules.custom.api.entity.CustomMqInbox;
 import org.jeecg.modules.custom.api.mapper.CustomMqInboxMapper;
 import org.jeecg.modules.custom.api.service.ICustomMqInboxService;
@@ -9,8 +10,10 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 @Service
+@Slf4j
 public class CustomMqInboxServiceImpl
         extends ServiceImpl<CustomMqInboxMapper, CustomMqInbox>
         implements ICustomMqInboxService {
@@ -24,8 +27,9 @@ public class CustomMqInboxServiceImpl
     @Override
     public CustomMqInbox receive(String eventId, String taskId, Integer runNo,
                                  String eventType, String payloadHash) {
-        if (findByEventId(eventId) != null) {
-            return null;
+        CustomMqInbox existing = findByEventId(eventId);
+        if (existing != null) {
+            return resolveDuplicate(existing, taskId, runNo, payloadHash);
         }
         CustomMqInbox inbox = new CustomMqInbox()
                 .setEventId(eventId)
@@ -38,7 +42,11 @@ public class CustomMqInboxServiceImpl
         try {
             return inboxMapper.insert(inbox) == 1 ? inbox : null;
         } catch (DuplicateKeyException duplicate) {
-            return null;
+            CustomMqInbox winner = findByEventId(eventId);
+            if (winner == null) {
+                throw duplicate;
+            }
+            return resolveDuplicate(winner, taskId, runNo, payloadHash);
         }
     }
 
@@ -55,6 +63,26 @@ public class CustomMqInboxServiceImpl
     private CustomMqInbox findByEventId(String eventId) {
         return inboxMapper.selectOne(new LambdaQueryWrapper<CustomMqInbox>()
                 .eq(CustomMqInbox::getEventId, eventId));
+    }
+
+    private CustomMqInbox resolveDuplicate(CustomMqInbox existing, String taskId,
+                                            Integer runNo, String payloadHash) {
+        if (Objects.equals(existing.getTaskId(), taskId)
+                && Objects.equals(existing.getRunNo(), runNo)
+                && equalHash(existing.getPayloadHash(), payloadHash)) {
+            return null;
+        }
+        String message = "inbox event " + existing.getEventId()
+                + " conflicts with its committed task/run/payload identity";
+        log.error("CUSTOM_MQ_INBOX_CONFLICT eventId={}, storedTaskId={}, incomingTaskId={}, "
+                        + "storedRunNo={}, incomingRunNo={}",
+                existing.getEventId(), existing.getTaskId(), taskId,
+                existing.getRunNo(), runNo);
+        throw new IllegalStateException(message);
+    }
+
+    private boolean equalHash(String left, String right) {
+        return left == null ? right == null : right != null && left.equalsIgnoreCase(right);
     }
 
     private void updateStatus(CustomMqInbox inbox, String status, String error) {

@@ -18,11 +18,23 @@ public interface CustomMqOutboxMapper extends BaseMapper<CustomMqOutbox> {
               @Param("claimedBy") String claimedBy,
               @Param("now") LocalDateTime now);
 
+    @Update("UPDATE CUSTOM_MQ_OUTBOX SET PAYLOAD_JSON = #{payloadJson}, UPDATED_AT = #{now} "
+            + "WHERE ID = #{id} AND STATUS = 'SENDING' AND CLAIM_TOKEN = #{claimToken}")
+    int refreshPayload(@Param("id") Long id,
+                       @Param("claimToken") String claimToken,
+                       @Param("payloadJson") String payloadJson,
+                       @Param("now") LocalDateTime now);
+
     @Update("UPDATE CUSTOM_MQ_OUTBOX SET STATUS = 'SENT', SENT_AT = #{now}, CLAIMED_AT = NULL, "
             + "CLAIM_TOKEN = NULL, CLAIMED_BY = NULL, LAST_ERROR = NULL, UPDATED_AT = #{now} "
-            + "WHERE ID = #{id} AND STATUS = 'SENDING' AND CLAIM_TOKEN = #{claimToken}")
+            + "WHERE ID = #{id} AND STATUS = 'SENDING' AND CLAIM_TOKEN = #{claimToken} "
+            + "AND AGGREGATE_ID = #{aggregateId} AND AGGREGATE_VERSION = #{aggregateVersion} "
+            + "AND EXISTS (SELECT 1 FROM CUSTOM_API_TASK T WHERE T.TASK_ID = #{aggregateId} "
+            + "AND NVL(T.CUSTOMS_AI_RUN_NO, 1) = #{aggregateVersion})")
     int markSent(@Param("id") Long id,
                  @Param("claimToken") String claimToken,
+                 @Param("aggregateId") String aggregateId,
+                 @Param("aggregateVersion") Integer aggregateVersion,
                  @Param("now") LocalDateTime now);
 
     @Update("UPDATE CUSTOM_MQ_OUTBOX SET STATUS = #{status}, ATTEMPT_COUNT = #{attemptCount}, "
@@ -48,4 +60,12 @@ public interface CustomMqOutboxMapper extends BaseMapper<CustomMqOutbox> {
             + "SENT_AT = NULL, LAST_ERROR = NULL, UPDATED_AT = #{now} "
             + "WHERE ID = #{id} AND STATUS = 'DEAD'")
     int replayDead(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+    @Update("UPDATE CUSTOM_MQ_OUTBOX SET STATUS = 'REPLAYED', CLAIMED_AT = NULL, "
+            + "CLAIM_TOKEN = NULL, CLAIMED_BY = NULL, NEXT_ATTEMPT_AT = NULL, "
+            + "LAST_ERROR = 'replayed as run ' || #{newRunNo}, UPDATED_AT = #{now} "
+            + "WHERE ID = #{id} AND STATUS = 'DEAD'")
+    int markReplayed(@Param("id") Long id,
+                     @Param("newRunNo") int newRunNo,
+                     @Param("now") LocalDateTime now);
 }

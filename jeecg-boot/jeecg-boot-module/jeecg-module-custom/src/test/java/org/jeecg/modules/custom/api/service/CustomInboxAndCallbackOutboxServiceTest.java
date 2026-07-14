@@ -17,6 +17,7 @@ import java.util.Base64;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -28,7 +29,8 @@ class CustomInboxAndCallbackOutboxServiceTest {
     @Test
     void duplicateInboxEventReturnsNullWithoutAnotherInsert() {
         CustomMqInboxMapper mapper = mock(CustomMqInboxMapper.class);
-        CustomMqInbox existing = new CustomMqInbox().setId(1L).setEventId("event-1");
+        CustomMqInbox existing = new CustomMqInbox().setId(1L).setEventId("event-1")
+                .setTaskId("task-1").setRunNo(1).setPayloadHash("a".repeat(64));
         when(mapper.selectOne(any())).thenReturn(existing);
         CustomMqInboxServiceImpl service = new CustomMqInboxServiceImpl(mapper);
 
@@ -36,6 +38,23 @@ class CustomInboxAndCallbackOutboxServiceTest {
                 "event-1", "task-1", 1, "parse.status", "a".repeat(64));
 
         assertThat(received).isNull();
+        verify(mapper, never()).insert(any(CustomMqInbox.class));
+    }
+
+    @Test
+    void duplicateInboxEventWithDifferentIdentityIsRejectedForDlqIsolation() {
+        CustomMqInboxMapper mapper = mock(CustomMqInboxMapper.class);
+        CustomMqInbox existing = new CustomMqInbox().setId(1L).setEventId("event-1")
+                .setTaskId("task-1").setRunNo(1).setPayloadHash("a".repeat(64));
+        when(mapper.selectOne(any())).thenReturn(existing);
+        CustomMqInboxServiceImpl service = new CustomMqInboxServiceImpl(mapper);
+
+        assertThatThrownBy(() -> service.receive(
+                "event-1", "task-1", 2, "parse.status", "b".repeat(64)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("event-1")
+                .hasMessageContaining("conflicts");
+
         verify(mapper, never()).insert(any(CustomMqInbox.class));
     }
 

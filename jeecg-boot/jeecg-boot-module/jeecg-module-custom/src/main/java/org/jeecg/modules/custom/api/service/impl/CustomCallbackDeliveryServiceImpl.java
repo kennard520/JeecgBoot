@@ -1,7 +1,6 @@
 package org.jeecg.modules.custom.api.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,6 +14,7 @@ import org.jeecg.modules.custom.api.mapper.CustomCallbackDeliveryMapper;
 import org.jeecg.modules.custom.api.service.ICustomCallbackDeliveryService;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -46,6 +46,7 @@ public class CustomCallbackDeliveryServiceImpl
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public CustomCallbackDelivery enqueueTerminal(CustomApiTask task, String eventType, Object result,
                                                    String errorCode, String errorMessage) {
         if (task == null || isBlank(task.getCallbackUrl()) || "polling".equals(task.getResponseMode())) {
@@ -115,42 +116,107 @@ public class CustomCallbackDeliveryServiceImpl
     }
 
     @Override
-    public boolean claim(Long id) {
-        return id != null && deliveryMapper.claim(id, LocalDateTime.now()) == 1;
-    }
-
-    @Override
-    public void markSucceeded(CustomCallbackDelivery delivery, int httpStatus) {
-        LocalDateTime now = LocalDateTime.now();
-        if (deliveryMapper.markSucceeded(delivery.getId(), httpStatus, now) != 1) {
-            throw new JeecgBootException("callback delivery is not in sending state");
+    public String claim(Long id, String claimedBy) {
+        if (id == null || isBlank(claimedBy)) {
+            return null;
         }
-        updateTaskCallback(delivery.getTaskId(), "success", null);
+        String claimToken = UUID.randomUUID().toString();
+        return deliveryMapper.claim(id, claimToken, claimedBy, LocalDateTime.now()) == 1
+                ? claimToken : null;
     }
 
     @Override
-    public void scheduleRetry(CustomCallbackDelivery delivery, Integer httpStatus,
+    @Transactional(rollbackFor = Exception.class)
+    public void markSucceeded(CustomCallbackDelivery delivery, String claimToken, int httpStatus) {
+        LocalDateTime now = LocalDateTime.now();
+        validateClaim(delivery, claimToken);
+        if (deliveryMapper.markSucceeded(delivery.getId(), claimToken, httpStatus, now) != 1) {
+            throw new JeecgBootException("callback delivery claim was lost before success");
+        }
+        updateTaskCallback(delivery, "success", null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void scheduleRetry(CustomCallbackDelivery delivery, String claimToken, Integer httpStatus,
                               String error, Duration delay) {
+        validateClaim(delivery, claimToken);
         int attempts = attemptCount(delivery) + 1;
         LocalDateTime now = LocalDateTime.now();
-        deliveryMapper.scheduleRetry(delivery.getId(), attempts,
+        String lastError = truncate(error);
+        if (deliveryMapper.scheduleRetry(delivery.getId(), claimToken, attempts,
                 now.plus(delay == null ? Duration.ofMinutes(1) : delay), httpStatus,
-                truncate(error), now);
-        updateTaskCallback(delivery.getTaskId(), "retrying", truncate(error));
+                lastError, now) != 1) {
+            throw new JeecgBootException("callback delivery claim was lost before retry");
+        }
+        updateTaskCallback(delivery, "retrying", lastError);
     }
 
     @Override
-    public void markPermanentFailure(CustomCallbackDelivery delivery, Integer httpStatus, String error) {
+    @Transactional(rollbackFor = Exception.class)
+    public void markPermanentFailure(CustomCallbackDelivery delivery, String claimToken,
+                                     Integer httpStatus, String error) {
+        validateClaim(delivery, claimToken);
         LocalDateTime now = LocalDateTime.now();
-        deliveryMapper.markPermanentFailure(delivery.getId(), attemptCount(delivery) + 1,
-                httpStatus, truncate(error), now);
-        updateTaskCallback(delivery.getTaskId(), "failed", truncate(error));
+        String lastError = truncate(error);
+        if (deliveryMapper.markPermanentFailure(delivery.getId(), claimToken,
+                attemptCount(delivery) + 1, httpStatus, lastError, now) != 1) {
+            throw new JeecgBootException("callback delivery claim was lost before failure");
+        }
+        updateTaskCallback(delivery, "failed", lastError);
     }
 
     @Override
     public void releaseStaleClaims(long claimTimeoutSeconds) {
         LocalDateTime now = LocalDateTime.now();
         deliveryMapper.releaseStaleClaims(now.minusSeconds(Math.max(1L, claimTimeoutSeconds)), now);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CustomCallbackDelivery replayDead(String deliveryId) {
+        if (isBlank(deliveryId)) {
+            throw new JeecgBootException("deliveryId is required");
+        }
+        CustomCallbackDelivery delivery = deliveryMapper.selectOne(
+                new LambdaQueryWrapper<CustomCallbackDelivery>()
+                        .eq(CustomCallbackDelivery::getDeliveryId, deliveryId));
+        if (delivery == null || !CustomCallbackDelivery.STATUS_DEAD.equals(delivery.getStatus())) {
+            throw new JeecgBootException("only a dead callback delivery can be replayed");
+        }
+        CustomApiTask task = taskMapper.selectByTaskIdForUpdate(delivery.getTaskId());
+        if (task == null) {
+            throw new JeecgBootException("callback task not found: " + delivery.getTaskId());
+        }
+        int deliveryRun = delivery.getRunNo() == null ? 1 : delivery.getRunNo();
+        int taskRun = task.getCustomsAiRunNo() == null ? 1 : task.getCustomsAiRunNo();
+        if (deliveryRun != taskRun) {
+            throw new JeecgBootException("callback delivery run is no longer current");
+        }
+        if (!List.of(CustomApiTask.STATUS_SUCCEEDED, CustomApiTask.STATUS_FAILED,
+                CustomApiTask.STATUS_TIMEOUT, CustomApiTask.STATUS_CANCELLED)
+                .contains(task.getStatus())) {
+            throw new JeecgBootException("callback task is not terminal");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (deliveryMapper.replayDead(delivery.getId(), now) != 1) {
+            throw new JeecgBootException("callback delivery changed before replay");
+        }
+        if (taskMapper.updateCallbackStatus(
+                delivery.getTaskId(), deliveryRun, "pending", null) != 1) {
+            throw new JeecgBootException("callback task run changed before replay");
+        }
+        delivery.setStatus(CustomCallbackDelivery.STATUS_PENDING)
+                .setAttemptCount(0)
+                .setNextAttemptAt(now)
+                .setClaimedAt(null)
+                .setClaimToken(null)
+                .setClaimedBy(null)
+                .setDeliveredAt(null)
+                .setHttpStatus(null)
+                .setLastError(null)
+                .setUpdatedAt(now);
+        return delivery;
     }
 
     private CustomCallbackDelivery findTerminal(CustomApiTask task, String eventType) {
@@ -196,11 +262,18 @@ public class CustomCallbackDeliveryServiceImpl
         }
     }
 
-    private void updateTaskCallback(String taskId, String status, String error) {
-        taskMapper.update(null, new LambdaUpdateWrapper<CustomApiTask>()
-                .eq(CustomApiTask::getTaskId, taskId)
-                .set(CustomApiTask::getCallbackStatus, status)
-                .set(CustomApiTask::getCallbackError, error));
+    private void updateTaskCallback(CustomCallbackDelivery delivery, String status, String error) {
+        int runNo = delivery.getRunNo() == null ? 1 : delivery.getRunNo();
+        if (taskMapper.updateCallbackStatus(
+                delivery.getTaskId(), runNo, status, error) != 1) {
+            throw new JeecgBootException("callback task run changed before delivery transition");
+        }
+    }
+
+    private void validateClaim(CustomCallbackDelivery delivery, String claimToken) {
+        if (delivery == null || delivery.getId() == null || isBlank(claimToken)) {
+            throw new JeecgBootException("callback delivery claim is required");
+        }
     }
 
     private int attemptCount(CustomCallbackDelivery delivery) {

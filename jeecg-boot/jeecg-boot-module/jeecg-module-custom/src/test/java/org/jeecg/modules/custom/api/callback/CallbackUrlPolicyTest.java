@@ -4,6 +4,7 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.net.URI;
 import java.util.List;
 import java.util.Set;
@@ -17,9 +18,13 @@ class CallbackUrlPolicyTest {
     void acceptsHttpsHostOnlyWhenEveryResolvedAddressIsPublic() throws Exception {
         CallbackUrlPolicy policy = policy("93.184.216.34", Set.of("callbacks.example:443"));
 
-        URI uri = policy.validate("https://callbacks.example/result");
+        ValidatedCallbackTarget target = policy.resolveAndValidate(
+                "https://callbacks.example/result");
+        URI uri = target.uri();
 
         assertThat(uri.getHost()).isEqualTo("callbacks.example");
+        assertThat(target.addresses()).extracting(InetAddress::getHostAddress)
+                .containsExactly("93.184.216.34");
     }
 
     @Test
@@ -62,6 +67,18 @@ class CallbackUrlPolicyTest {
                 .isInstanceOf(JeecgBootException.class).hasMessageContaining("redirect host");
         assertThatThrownBy(() -> policy.validateRedirect(source, "https://127.0.0.1/result"))
                 .isInstanceOf(JeecgBootException.class);
+    }
+
+    @Test
+    void temporaryDnsFailureIsTypedAsRetryableRatherThanPolicyViolation() {
+        CallbackUrlPolicy policy = new CallbackUrlPolicy(true, host -> {
+            throw new UnknownHostException("temporary resolver outage");
+        }, Set.of());
+
+        assertThatThrownBy(() -> policy.resolveAndValidate(
+                "https://callbacks.example/result"))
+                .isInstanceOf(CallbackDnsException.class)
+                .hasMessageContaining("resolved");
     }
 
     private CallbackUrlPolicy policy(String address, Set<String> allowlist) throws Exception {

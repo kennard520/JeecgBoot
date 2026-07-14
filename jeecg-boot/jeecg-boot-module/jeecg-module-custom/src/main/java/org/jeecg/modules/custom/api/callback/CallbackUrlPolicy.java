@@ -1,6 +1,5 @@
 package org.jeecg.modules.custom.api.callback;
 
-import org.jeecg.common.exception.JeecgBootException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -41,55 +40,64 @@ public class CallbackUrlPolicy {
     }
 
     public URI validate(String rawUrl) {
+        return resolveAndValidate(rawUrl).uri();
+    }
+
+    public ValidatedCallbackTarget resolveAndValidate(String rawUrl) {
         if (rawUrl == null || rawUrl.isBlank() || rawUrl.length() > MAX_URL_LENGTH) {
-            throw new JeecgBootException("callback URL is required and must be at most 2048 characters");
+            throw new CallbackPolicyViolationException(
+                    "callback URL is required and must be at most 2048 characters");
         }
         final URI uri;
         try {
             uri = URI.create(rawUrl.trim());
         } catch (IllegalArgumentException invalid) {
-            throw new JeecgBootException("callback URL is invalid");
+            throw new CallbackPolicyViolationException("callback URL is invalid");
         }
         if (!uri.isAbsolute() || uri.getHost() == null || uri.getHost().isBlank()) {
-            throw new JeecgBootException("callback URL must contain an absolute host");
+            throw new CallbackPolicyViolationException("callback URL must contain an absolute host");
         }
         if (requireHttps && !"https".equalsIgnoreCase(uri.getScheme())) {
-            throw new JeecgBootException("callback URL must use HTTPS");
+            throw new CallbackPolicyViolationException("callback URL must use HTTPS");
         }
         if (!List.of("http", "https").contains(uri.getScheme().toLowerCase(Locale.ROOT))) {
-            throw new JeecgBootException("callback URL scheme is not supported");
+            throw new CallbackPolicyViolationException("callback URL scheme is not supported");
         }
         if (uri.getRawUserInfo() != null) {
-            throw new JeecgBootException("callback URL credentials are not allowed");
+            throw new CallbackPolicyViolationException("callback URL credentials are not allowed");
         }
         if (uri.getFragment() != null) {
-            throw new JeecgBootException("callback URL fragments are not allowed");
+            throw new CallbackPolicyViolationException("callback URL fragments are not allowed");
         }
 
         String host = normalizeHost(uri.getHost());
         rejectMetadataHost(host);
         String authority = host + ":" + effectivePort(uri);
         if (!allowlist.isEmpty() && !allowlist.contains(authority) && !allowlist.contains(host)) {
-            throw new JeecgBootException("callback host is not allowlisted");
+            throw new CallbackPolicyViolationException("callback host is not allowlisted");
         }
 
         final List<InetAddress> addresses;
         try {
             addresses = resolver.resolve(host);
         } catch (Exception unresolved) {
-            throw new JeecgBootException("callback host cannot be resolved");
+            throw new CallbackDnsException("callback host cannot be resolved", unresolved);
         }
-        if (addresses == null || addresses.isEmpty()
-                || addresses.stream().anyMatch(address -> !isPublic(address))) {
-            throw new JeecgBootException("callback host must resolve only to public addresses");
+        if (addresses == null || addresses.isEmpty()) {
+            throw new CallbackDnsException("callback host cannot be resolved");
         }
-        return uri;
+        if (addresses.stream().anyMatch(address -> !isPublic(address))) {
+            throw new CallbackPolicyViolationException(
+                    "callback host must resolve only to public addresses");
+        }
+        return new ValidatedCallbackTarget(uri, addresses);
     }
 
     public URI validateRedirect(URI source, String location) {
         URI target = validate(location);
         if (source == null || !sameAuthority(source, target)) {
-            throw new JeecgBootException("callback redirect host must match the original host");
+            throw new CallbackPolicyViolationException(
+                    "callback redirect host must match the original host");
         }
         return target;
     }
@@ -116,11 +124,12 @@ public class CallbackUrlPolicy {
 
     private void rejectMetadataHost(String host) {
         if (host.equals("localhost") || host.endsWith(".localhost")) {
-            throw new JeecgBootException("callback metadata or localhost hosts are not allowed");
+            throw new CallbackPolicyViolationException(
+                    "callback metadata or localhost hosts are not allowed");
         }
         if (host.equals("metadata") || host.startsWith("metadata.")
                 || host.contains(".metadata.") || host.endsWith(".internal")) {
-            throw new JeecgBootException("callback metadata host is not allowed");
+            throw new CallbackPolicyViolationException("callback metadata host is not allowed");
         }
     }
 

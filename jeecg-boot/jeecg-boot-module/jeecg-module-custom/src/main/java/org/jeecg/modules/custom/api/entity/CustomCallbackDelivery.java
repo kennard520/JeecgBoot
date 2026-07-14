@@ -68,6 +68,12 @@ public class CustomCallbackDelivery implements Serializable {
     @TableField("claimed_at")
     private LocalDateTime claimedAt;
 
+    @TableField("claim_token")
+    private String claimToken;
+
+    @TableField("claimed_by")
+    private String claimedBy;
+
     @TableField("last_attempt_at")
     private LocalDateTime lastAttemptAt;
 

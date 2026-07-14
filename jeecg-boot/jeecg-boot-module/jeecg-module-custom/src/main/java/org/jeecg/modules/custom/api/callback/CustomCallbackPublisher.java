@@ -1,7 +1,6 @@
 package org.jeecg.modules.custom.api.callback;
 
 import lombok.extern.slf4j.Slf4j;
-import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomCallbackDelivery;
 import org.jeecg.modules.custom.api.service.ICustomCallbackDeliveryService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,7 +10,6 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -23,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 @Component
 @Slf4j
@@ -40,6 +39,7 @@ public class CustomCallbackPublisher {
     private final Clock clock;
     private final int batchSize;
     private final long claimTimeoutSeconds;
+    private final String publisherId;
 
     @Autowired
     public CustomCallbackPublisher(
@@ -48,9 +48,10 @@ public class CustomCallbackPublisher {
             CallbackSecretCipher secretCipher,
             CallbackHttpTransport transport,
             @Value("${custom.api.callback.batch-size:20}") int batchSize,
-            @Value("${custom.api.callback.claim-timeout-seconds:300}") long claimTimeoutSeconds) {
+            @Value("${custom.api.callback.claim-timeout-seconds:300}") long claimTimeoutSeconds,
+            @Value("${custom.api.callback.publisher-id:${HOSTNAME:java}}") String publisherId) {
         this(deliveryService, urlPolicy, secretCipher, transport, Clock.systemUTC(),
-                batchSize, claimTimeoutSeconds);
+                batchSize, claimTimeoutSeconds, normalizedPublisherId(publisherId));
     }
 
     public CustomCallbackPublisher(ICustomCallbackDeliveryService deliveryService,
@@ -59,7 +60,8 @@ public class CustomCallbackPublisher {
                                    CallbackHttpTransport transport,
                                    Clock clock,
                                    int batchSize,
-                                   long claimTimeoutSeconds) {
+                                   long claimTimeoutSeconds,
+                                   String publisherId) {
         this.deliveryService = deliveryService;
         this.urlPolicy = urlPolicy;
         this.secretCipher = secretCipher;
@@ -67,22 +69,27 @@ public class CustomCallbackPublisher {
         this.clock = clock;
         this.batchSize = batchSize;
         this.claimTimeoutSeconds = claimTimeoutSeconds;
+        this.publisherId = publisherId;
     }
 
-    @Scheduled(fixedDelayString = "${custom.api.callback.publish-interval-ms:1000}")
+    @Scheduled(fixedDelayString = "${custom.api.callback.publish-interval-ms:1000}",
+            scheduler = "customCallbackTaskScheduler")
     public void publishPending() {
         deliveryService.releaseStaleClaims(claimTimeoutSeconds);
         for (CustomCallbackDelivery delivery : deliveryService.findDue(batchSize)) {
-            if (!deliveryService.claim(delivery.getId())) {
+            String claimToken = deliveryService.claim(delivery.getId(), publisherId);
+            if (claimToken == null) {
                 continue;
             }
-            publishOne(delivery);
+            delivery.setClaimToken(claimToken).setClaimedBy(publisherId);
+            publishOne(delivery, claimToken);
         }
     }
 
-    private void publishOne(CustomCallbackDelivery delivery) {
+    private void publishOne(CustomCallbackDelivery delivery, String claimToken) {
+        CallbackHttpResponse response;
         try {
-            URI uri = urlPolicy.validate(delivery.getCallbackUrl());
+            ValidatedCallbackTarget target = urlPolicy.resolveAndValidate(delivery.getCallbackUrl());
             String secret = secretCipher.decrypt(
                     delivery.getSecretCiphertext(), delivery.getSecretKeyVersion());
             byte[] body = delivery.getPayloadJson().getBytes(StandardCharsets.UTF_8);
@@ -94,32 +101,43 @@ public class CustomCallbackPublisher {
             headers.put("X-CustomsAI-Timestamp", timestamp);
             headers.put("X-CustomsAI-Signature", "v1=" + signature(secret, timestamp, body));
 
-            CallbackHttpResponse response = transport.send(uri, body, headers);
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                deliveryService.markSucceeded(delivery, response.statusCode());
-                return;
-            }
-            String error = responseError(response);
-            if (isRetryable(response.statusCode())) {
-                retryOrDead(delivery, response.statusCode(), error, retryDelay(delivery, response));
-            } else {
-                deliveryService.markPermanentFailure(delivery, response.statusCode(), error);
-            }
-        } catch (JeecgBootException | IllegalArgumentException | IllegalStateException securityOrConfig) {
-            deliveryService.markPermanentFailure(delivery, null, message(securityOrConfig));
-        } catch (Exception transportError) {
-            retryOrDead(delivery, null, message(transportError), retryDelay(delivery, null));
+            response = transport.send(target, body, headers);
+        } catch (CallbackPolicyViolationException | IllegalArgumentException permanent) {
+            deliveryService.markPermanentFailure(
+                    delivery, claimToken, null, message(permanent));
+            return;
+        } catch (CallbackDnsException | CallbackConfigurationException retryable) {
+            retryOrDead(delivery, claimToken, null, message(retryable),
+                    retryDelay(delivery, null));
+            return;
+        } catch (Exception transportOrConfig) {
+            retryOrDead(delivery, claimToken, null, message(transportOrConfig),
+                    retryDelay(delivery, null));
+            return;
+        }
+
+        if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            deliveryService.markSucceeded(delivery, claimToken, response.statusCode());
+            return;
+        }
+        String error = responseError(response);
+        if (isRetryable(response.statusCode())) {
+            retryOrDead(delivery, claimToken, response.statusCode(), error,
+                    retryDelay(delivery, response));
+        } else {
+            deliveryService.markPermanentFailure(
+                    delivery, claimToken, response.statusCode(), error);
         }
     }
 
-    private void retryOrDead(CustomCallbackDelivery delivery, Integer httpStatus,
+    private void retryOrDead(CustomCallbackDelivery delivery, String claimToken, Integer httpStatus,
                              String error, Duration delay) {
         int attempts = delivery.getAttemptCount() == null ? 0 : delivery.getAttemptCount();
         if (attempts >= RETRY_DELAYS.size()) {
-            deliveryService.markPermanentFailure(delivery, httpStatus, error);
+            deliveryService.markPermanentFailure(delivery, claimToken, httpStatus, error);
             return;
         }
-        deliveryService.scheduleRetry(delivery, httpStatus, error, delay);
+        deliveryService.scheduleRetry(delivery, claimToken, httpStatus, error, delay);
     }
 
     private Duration retryDelay(CustomCallbackDelivery delivery, CallbackHttpResponse response) {
@@ -183,5 +201,10 @@ public class CustomCallbackPublisher {
     private String truncate(String value) {
         return value == null || value.length() <= MAX_ERROR_LENGTH
                 ? value : value.substring(0, MAX_ERROR_LENGTH);
+    }
+
+    private static String normalizedPublisherId(String value) {
+        String prefix = value == null || value.isBlank() ? "java" : value.trim();
+        return prefix + "-" + UUID.randomUUID();
     }
 }

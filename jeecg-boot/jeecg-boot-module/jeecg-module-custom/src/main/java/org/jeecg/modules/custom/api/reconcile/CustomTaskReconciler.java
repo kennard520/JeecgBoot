@@ -51,7 +51,8 @@ public class CustomTaskReconciler {
         this.clock = clock;
     }
 
-    @Scheduled(fixedDelayString = "${custom.api.reconcile.interval-ms:60000}")
+    @Scheduled(fixedDelayString = "${custom.api.reconcile.interval-ms:60000}",
+            scheduler = "customReliabilityTaskScheduler")
     public void reconcileStaleTasks() {
         LocalDateTime now = LocalDateTime.now(clock);
         List<String> candidateTaskIds = taskMapper.selectStaleCandidateTaskIds(

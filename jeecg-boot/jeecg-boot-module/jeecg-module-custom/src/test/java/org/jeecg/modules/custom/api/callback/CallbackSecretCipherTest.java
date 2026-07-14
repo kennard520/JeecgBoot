@@ -28,7 +28,15 @@ class CallbackSecretCipherTest {
         CallbackSecretCipher cipher = new CallbackSecretCipher("v1", "v1=" + key);
 
         assertThatThrownBy(() -> cipher.decrypt("invalid", "v0"))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(CallbackConfigurationException.class)
                 .hasMessageContaining("v0");
+    }
+
+    @Test
+    void missingActiveEncryptionKeyFailsApplicationStartup() {
+        assertThatThrownBy(() -> new CallbackSecretCipher("v1", ""))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("active key version")
+                .hasMessageContaining("v1");
     }
 }

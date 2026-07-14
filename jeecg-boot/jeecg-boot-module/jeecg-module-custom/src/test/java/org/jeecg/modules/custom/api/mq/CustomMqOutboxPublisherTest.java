@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -30,7 +31,12 @@ class CustomMqOutboxPublisherTest {
 
         fixture.publisher.publishPending();
 
-        verify(fixture.outbox).markSent(1L, "claim-1");
+        var ordered = inOrder(fixture.outbox, fixture.producer);
+        ordered.verify(fixture.outbox).prepareForPublish(
+                fixture.event, "claim-1", fixture.task, fixture.file);
+        ordered.verify(fixture.producer).publishConfirmed(
+                fixture.task, fixture.file, fixture.event);
+        ordered.verify(fixture.outbox).markSent(fixture.event, "claim-1");
         verify(fixture.outbox, never()).reschedule(
                 any(), anyString(), anyString(), anyInt(), anyLong(), anyLong());
     }
@@ -52,12 +58,26 @@ class CustomMqOutboxPublisherTest {
     void stalePublisherDoesNotRescheduleEventClaimedByAnotherInstance() {
         Fixture fixture = fixture();
         doThrow(new OutboxClaimLostException("claim lost"))
-                .when(fixture.outbox).markSent(1L, "claim-1");
+                .when(fixture.outbox).markSent(fixture.event, "claim-1");
 
         fixture.publisher.publishPending();
 
         verify(fixture.outbox, never()).reschedule(
                 any(), anyString(), anyString(), anyInt(), anyLong(), anyLong());
+    }
+
+    @Test
+    void staleAggregateRunIsDeadLetteredOnceInsteadOfLoopingForever() {
+        Fixture fixture = fixture();
+        when(fixture.outbox.prepareForPublish(
+                fixture.event, "claim-1", fixture.task, fixture.file))
+                .thenThrow(new StaleOutboxRunException("aggregate run changed"));
+
+        fixture.publisher.publishPending();
+
+        verify(fixture.producer, never()).publishConfirmed(any(), any(), any());
+        verify(fixture.outbox).reschedule(
+                fixture.event, "claim-1", "aggregate run changed", 1, 2L, 300L);
     }
 
     private Fixture fixture() {
@@ -73,13 +93,15 @@ class CustomMqOutboxPublisherTest {
         when(outbox.claim(eq(1L), anyString())).thenReturn("claim-1");
         when(taskMapper.selectOne(any())).thenReturn(task);
         when(fileService.getOne(any(), eq(false))).thenReturn(file);
+        when(outbox.prepareForPublish(event, "claim-1", task, file)).thenReturn(event);
         CustomMqOutboxPublisher publisher = new CustomMqOutboxPublisher(
                 outbox, producer, taskMapper, fileService,
                 20, 8, 2L, 300L, 300L, "java-a");
-        return new Fixture(outbox, producer, event, publisher);
+        return new Fixture(outbox, producer, task, file, event, publisher);
     }
 
     private record Fixture(ICustomMqOutboxService outbox, CustomApiTaskMqProducer producer,
+                           CustomApiTask task, CustomApiFile file,
                            CustomMqOutbox event, CustomMqOutboxPublisher publisher) {
     }
 }
