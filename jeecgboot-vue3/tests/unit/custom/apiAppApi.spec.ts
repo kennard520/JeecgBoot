@@ -66,7 +66,7 @@ describe('API app agent grant contract', () => {
     await expect(list({ pageNo: 1 })).rejects.toThrow('grant service unavailable');
   });
 
-  it('saves compatible app fields first and then replaces the app agent grants', async () => {
+  it('saves the app and its agent grants atomically through one request', async () => {
     post.mockResolvedValue({ id: 7, appKey: 'demo', companyCode: 'ILLUMNA-CUSTOMS' });
     put.mockResolvedValue([]);
 
@@ -90,15 +90,10 @@ describe('API app agent grant contract', () => {
         enabled: 1,
         rateLimit: 60,
         companyCode: 'ILLUMNA-CUSTOMS',
-      },
-    });
-    expect(put).toHaveBeenCalledWith({
-      url: '/custom/ai/admin/app-grants',
-      data: {
-        appId: 7,
         agentCodes: ['CUSTOMS', 'ILLUMNA-CUSTOMS'],
         defaultAgentCode: 'ILLUMNA-CUSTOMS',
       },
     });
+    expect(put).not.toHaveBeenCalled();
   });
 });

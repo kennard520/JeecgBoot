@@ -296,7 +296,8 @@ jobs:
             fi
 
             FRONTEND_HEALTH_BODY=$(mktemp)
-            if ! curl -fkSs https://127.0.0.1/ -H 'Host: smart-entry.citclub.org' --max-time 20 -o "$FRONTEND_HEALTH_BODY" \
+            if ! curl -fSs --resolve smart-entry.citclub.org:443:127.0.0.1 \
+              https://smart-entry.citclub.org/ --max-time 20 -o "$FRONTEND_HEALTH_BODY" \
               || ! grep -q 'id="app"' "$FRONTEND_HEALTH_BODY"; then
               echo "Frontend health check failed"
               rm -f "$FRONTEND_HEALTH_BODY"
@@ -306,15 +307,16 @@ jobs:
 
             FRONTEND_MAIN_ASSET=$(grep -o 'src="/js/[^"]*\.js"' "$FRONTEND_HEALTH_BODY" | head -n 1 | cut -d'"' -f2)
             if [ -z "$FRONTEND_MAIN_ASSET" ] \
-              || ! curl -fkSs "https://127.0.0.1${FRONTEND_MAIN_ASSET}" -H 'Host: smart-entry.citclub.org' --max-time 20 -o /dev/null; then
+              || ! curl -fSs --resolve smart-entry.citclub.org:443:127.0.0.1 \
+                "https://smart-entry.citclub.org${FRONTEND_MAIN_ASSET}" --max-time 20 -o /dev/null; then
               echo "Frontend main asset health check failed"
               rm -f "$FRONTEND_HEALTH_BODY"
               rollback_release
               exit 1
             fi
 
-            if ! curl -fkSs https://127.0.0.1/jeecgboot/sys/getEncryptedString \
-              -H 'Host: smart-entry.citclub.org' --max-time 20 \
+            if ! curl -fSs --resolve smart-entry.citclub.org:443:127.0.0.1 \
+              https://smart-entry.citclub.org/jeecgboot/sys/getEncryptedString --max-time 20 \
               | grep -q '"success":true'; then
               echo "Backend HTTP health check failed"
               rm -f "$FRONTEND_HEALTH_BODY"

@@ -20,6 +20,8 @@ import org.jeecg.modules.custom.api.vo.TaskResponse;
 import org.jeecg.modules.custom.task.entity.Document;
 import org.jeecg.modules.custom.task.service.IDocumentService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,14 +30,18 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -163,11 +169,93 @@ class CustomMqOutboxServiceTest {
         when(hasher.hashTask(any(), eq("CUSTOMS"))).thenReturn("a".repeat(64));
         TaskCreateRequest request = new TaskCreateRequest();
         request.setFileId("file-1");
+        request.setClientTaskId(" client-task-1 ");
+        request.setIdempotencyKey(" idem-task-1 ");
 
         TaskResponse response = taskService.createTask(app, request, null);
 
         assertThat(response.getStatus()).isEqualTo(CustomApiTask.STATUS_QUEUED);
-        verify(outboxService).enqueueParseTask(any(CustomApiTask.class), eq(file), eq(1));
+        ArgumentCaptor<Document> document = ArgumentCaptor.forClass(Document.class);
+        verify(documentService).save(document.capture());
+        assertThat(document.getValue().getCustomerCode()).isEqualTo("CUSTOMER-A");
+        assertThat(document.getValue().getAgentCode()).isEqualTo("CUSTOMS");
+        ArgumentCaptor<CustomApiTask> task = ArgumentCaptor.forClass(CustomApiTask.class);
+        verify(outboxService).enqueueParseTask(task.capture(), eq(file), eq(1));
+        assertThat(task.getValue().getClientTaskId()).isEqualTo("client-task-1");
+        assertThat(task.getValue().getIdempotencyKey()).isEqualTo("idem-task-1");
+    }
+
+    @Test
+    void rejectsCallbackSecretThatCannotFitTheEncryptedDatabaseColumn() throws Exception {
+        CustomApiTaskServiceImpl taskService = new CustomApiTaskServiceImpl();
+        ICustomApiFileService fileService = mock(ICustomApiFileService.class);
+        CustomAgentAccessService accessService = mock(CustomAgentAccessService.class);
+        setField(taskService, "fileService", fileService);
+        setField(taskService, "agentAccessService", accessService);
+        setField(taskService, "idempotencyService", mock(CustomApiIdempotencyService.class));
+        setField(taskService, "requestHasher", mock(CanonicalRequestHasher.class));
+        CustomApiApp app = new CustomApiApp().setId(7L).setCustomerCode("CUSTOMER-A").setEnabled(1);
+        when(accessService.requireApiAgent(app, null)).thenReturn("CUSTOMS");
+        when(fileService.requireUploadedFile(app, "file-1")).thenReturn(file("file-1"));
+        TaskCreateRequest request = new TaskCreateRequest();
+        request.setFileId("file-1");
+        request.setResponseMode("callback");
+        request.setCallbackUrl("https://callback.example.test/result");
+        request.setCallbackSecret("密".repeat(200));
+
+        assertThatThrownBy(() -> taskService.createTask(app, request, null))
+                .isInstanceOf(org.jeecg.common.exception.JeecgBootException.class)
+                .hasMessageContaining("callbackSecret")
+                .hasMessageContaining("512 bytes");
+    }
+
+    @Test
+    void concurrentTaskInsertReturnsWinnerAndRemovesLoserDocumentWithoutAnotherOutbox() throws Exception {
+        CustomApiTaskServiceImpl taskService = spy(new CustomApiTaskServiceImpl());
+        ICustomApiFileService fileService = mock(ICustomApiFileService.class);
+        IDocumentService documentService = mock(IDocumentService.class);
+        CustomAgentAccessService accessService = mock(CustomAgentAccessService.class);
+        CustomApiIdempotencyService idempotency = mock(CustomApiIdempotencyService.class);
+        CanonicalRequestHasher hasher = mock(CanonicalRequestHasher.class);
+        ICustomMqOutboxService outboxService = mock(ICustomMqOutboxService.class);
+        setField(taskService, "fileService", fileService);
+        setField(taskService, "documentService", documentService);
+        setField(taskService, "agentAccessService", accessService);
+        setField(taskService, "idempotencyService", idempotency);
+        setField(taskService, "requestHasher", hasher);
+        setField(taskService, "outboxService", outboxService);
+
+        CustomApiApp app = new CustomApiApp().setId(7L).setCustomerCode("CUSTOMER-A").setEnabled(1);
+        CustomApiFile file = file("file-1").setAppId(7L).setCustomerCode("CUSTOMER-A");
+        CustomApiTask winner = task("task-winner", "file-1", 1)
+                .setAppId(7L)
+                .setClientTaskId("client-task-1")
+                .setIdempotencyKey("idem-task-1")
+                .setRequestHash("a".repeat(64));
+        when(fileService.requireUploadedFile(app, "file-1")).thenReturn(file);
+        when(accessService.requireApiAgent(app, null)).thenReturn("CUSTOMS");
+        when(hasher.hashTask(any(), eq("CUSTOMS"))).thenReturn("a".repeat(64));
+        when(idempotency.findTask(7L, "client-task-1", "idem-task-1", "a".repeat(64)))
+                .thenReturn(null, winner);
+        when(documentService.save(any(Document.class))).thenAnswer(invocation -> {
+            ((Document) invocation.getArgument(0)).setId(99L);
+            return true;
+        });
+        when(documentService.removeById(99L)).thenReturn(true);
+        doThrow(new DuplicateKeyException("concurrent task insert"))
+                .when(taskService).save(any(CustomApiTask.class));
+        TaskCreateRequest request = new TaskCreateRequest();
+        request.setFileId("file-1");
+        request.setClientTaskId("client-task-1");
+        request.setIdempotencyKey("idem-task-1");
+
+        AtomicReference<TaskResponse> response = new AtomicReference<>();
+        assertThatCode(() -> response.set(taskService.createTask(app, request, null)))
+                .doesNotThrowAnyException();
+
+        assertThat(response.get().getTaskId()).isEqualTo("task-winner");
+        verify(documentService).removeById(99L);
+        verify(outboxService, never()).enqueueParseTask(any(), any(), anyInt());
     }
 
     @Test
@@ -252,7 +340,7 @@ class CustomMqOutboxServiceTest {
         CustomApiTask task = task("task-1", "file-1", 1).setId(21L)
                 .setStatus(CustomApiTask.STATUS_FAILED).setErrorCode("OUTBOX_DEAD")
                 .setErrorMessage("broker unavailable");
-        when(mapper.selectOne(any())).thenReturn(dead, null);
+        when(mapper.selectOne(any())).thenReturn(dead, (CustomMqOutbox) null);
         when(mapper.markReplayed(eq(12L), eq(2), any(LocalDateTime.class))).thenReturn(1);
         doAnswer(invocation -> {
             ((CustomMqOutbox) invocation.getArgument(0)).setId(13L);

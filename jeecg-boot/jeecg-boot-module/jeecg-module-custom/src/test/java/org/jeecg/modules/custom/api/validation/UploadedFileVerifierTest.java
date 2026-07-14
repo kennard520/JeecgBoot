@@ -120,6 +120,22 @@ class UploadedFileVerifierTest {
     }
 
     @Test
+    void allowsAValidXlsxPackageInsideTheUploadedCaseZip() throws Exception {
+        byte[] xlsx = zip(Map.of(
+                "[Content_Types].xml", "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"/>",
+                "_rels/.rels", "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>",
+                "xl/workbook.xml", "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"/>"
+        ));
+        byte[] bytes = zipBytes(Map.of("documents/invoice.xlsx", xlsx));
+        CustomApiFile file = expectedZip(bytes);
+        supply(file, bytes);
+
+        VerifiedFile verified = verifier(20).verify(file);
+
+        assertThat(verified.detectedType()).isEqualTo("application/zip");
+    }
+
+    @Test
     void rejectsUnixSymbolicLinkEntry() throws Exception {
         byte[] bytes = symlinkZip();
         CustomApiFile file = expectedZip(bytes);

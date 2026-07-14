@@ -92,6 +92,18 @@ public class Document implements Serializable {
     @Schema(description = "文件MIME类型")
     private String contentType;
 
+    @TableField("customer_code")
+    @Schema(description = "所属客户编码")
+    private String customerCode;
+
+    @TableField("uploader_user_id")
+    @Schema(description = "上传用户ID")
+    private String uploaderUserId;
+
+    @TableField("agent_code")
+    @Schema(description = "解析智能体编码")
+    private String agentCode;
+
     @TableField("status")
     @Excel(name = "处理状态", width = 30)
     @Schema(description = "处理状态：NOT_STARTED 未开始，PARSING 解析中，COMPLETED 已完成")

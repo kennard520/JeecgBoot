@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -145,6 +146,30 @@ class CustomApiFileServiceImplTest {
     }
 
     @Test
+    void verificationFailureDeletesTheNewFrozenObject() {
+        ObjectStorageService storage = mock(ObjectStorageService.class);
+        UploadedFileVerifier verifier = mock(UploadedFileVerifier.class);
+        CustomApiIdempotencyService idempotency = mock(CustomApiIdempotencyService.class);
+        CustomApiFileServiceImpl service = spy(new CustomApiFileServiceImpl(
+                storage, verifier, idempotency, new CanonicalRequestHasher()
+        ));
+        CustomApiApp app = new CustomApiApp().setId(9L).setCustomerCode("CUSTOMER-A");
+        CustomApiFile file = ownedFile(CustomApiFile.STATUS_PENDING)
+                .setOriginalFilename("case.zip")
+                .setObjectKey("custom-api/uploads/file-1/case.zip")
+                .setExpiresAt(LocalDateTime.now().plusMinutes(5));
+        doReturn(file).when(service).getOne(any(), eq(false));
+        doThrow(new JeecgBootException("invalid archive")).when(verifier).verify(file);
+
+        assertThatThrownBy(() -> service.complete(app, "file-1", new FileCompleteRequest()))
+                .isInstanceOf(JeecgBootException.class)
+                .hasMessageContaining("invalid archive");
+
+        verify(storage).deleteObject(file);
+        verify(service, never()).updateById(any());
+    }
+
+    @Test
     void localUploadRejectsCompletedFileEvenWhenTokenMatches() {
         ObjectStorageService storage = mock(ObjectStorageService.class);
         CustomApiFileServiceImpl service = fileService(storage);
@@ -197,12 +222,12 @@ class CustomApiFileServiceImplTest {
         request.setFilename("case.zip");
         request.setContentType("application/zip");
         request.setFileSize(123L);
-        request.setClientFileId("client-file-1");
-        request.setIdempotencyKey("idem-file-1");
+        request.setClientFileId(" client-file-1 ");
+        request.setIdempotencyKey(" idem-file-1 ");
 
         AtomicReference<CustomApiFile> inserted = new AtomicReference<>();
         List<String> issuedTokens = new ArrayList<>();
-        when(idempotency.findFile(eq(9L), eq("client-file-1"), eq("idem-file-1"), anyString()))
+        when(idempotency.findFile(eq(9L), anyString(), anyString(), anyString()))
                 .thenAnswer(ignored -> inserted.get());
         when(storage.createUploadUrl(any(), anyString(), any())).thenAnswer(invocation -> {
             CustomApiFile file = invocation.getArgument(0);
@@ -222,6 +247,8 @@ class CustomApiFileServiceImplTest {
         doReturn(true).when(service).updateById(any());
 
         FileUploadUrlResponse first = service.createUploadUrl(app, request, mock(jakarta.servlet.http.HttpServletRequest.class));
+        assertThat(inserted.get().getClientFileId()).isEqualTo("client-file-1");
+        assertThat(inserted.get().getIdempotencyKey()).isEqualTo("idem-file-1");
         LocalDateTime generatedExpiry = inserted.get().getExpiresAt();
         int persistedNano = generatedExpiry.getNano() == 0 ? 999_000_000 : 0;
         inserted.get().setExpiresAt(generatedExpiry.withNano(persistedNano));

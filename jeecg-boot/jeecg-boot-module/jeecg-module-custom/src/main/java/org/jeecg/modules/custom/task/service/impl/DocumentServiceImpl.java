@@ -7,14 +7,17 @@ import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.common.util.filter.SsrfFileTypeFilter;
 import org.jeecg.common.util.oConvertUtils;
+import org.jeecg.modules.custom.ai.service.CustomAgentAccessService;
+import org.jeecg.modules.custom.ai.service.CustomCustomerDataScopeService;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.jeecg.modules.custom.api.service.ICustomApiFileService;
 import org.jeecg.modules.custom.api.service.ICustomMqOutboxService;
-import org.jeecg.modules.custom.api.storage.ObjectStorageService;
 import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.util.CustomApiIds;
+import org.jeecg.modules.custom.api.validation.UploadedFileVerifier;
+import org.jeecg.modules.custom.api.validation.VerifiedFile;
 import org.jeecg.modules.custom.task.entity.Document;
 import org.jeecg.modules.custom.task.mapper.DocumentMapper;
 import org.jeecg.modules.custom.task.service.IDocumentService;
@@ -22,16 +25,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.net.URI;
-import java.io.InputStream;
-import java.security.MessageDigest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
-import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
 
@@ -71,11 +73,17 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
     private ICustomMqOutboxService customMqOutboxService;
 
     @Autowired
-    private ObjectStorageService objectStorageService;
+    private UploadedFileVerifier uploadedFileVerifier;
+
+    @Autowired
+    private CustomAgentAccessService customAgentAccessService;
+
+    @Autowired
+    private CustomCustomerDataScopeService customerDataScopeService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Document uploadZip(MultipartFile file) {
+    public Document uploadZip(MultipartFile file, String agentCode, boolean autoStart) {
         if (file == null || file.isEmpty()) {
             throw new JeecgBootException("上传文件不能为空");
         }
@@ -84,18 +92,21 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             throw new JeecgBootException("仅支持上传.zip压缩包");
         }
 
+        String resolvedAgentCode = customAgentAccessService.requireWebAgent(agentCode);
         String storagePath = saveDocumentZip(file, originalFilename);
+        registerRollbackCleanup(storagePath);
 
         Document document = new Document();
         document.markUploaded(originalFilename, storagePath, CommonConstant.UPLOAD_TYPE_LOCAL, file.getSize(), file.getContentType());
+        customerDataScopeService.stampNewDocument(document, resolvedAgentCode);
         this.save(document);
-        return document;
+        return autoStart ? startParse(document.getId()) : document;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Document startParse(Long documentId) {
-        Document document = requireDocument(documentId);
+        Document document = customerDataScopeService.requireDocument(documentId);
         if (Document.STATUS_PARSING.equals(document.getStatus())) {
             return document;
         }
@@ -167,7 +178,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         LocalDateTime now = LocalDateTime.now();
         CustomApiFile file = new CustomApiFile()
                 .setFileId(CustomApiIds.fileId())
-                .setCustomerCode(firstNonBlank(internalCustomerCode, "INTERNAL"))
+                .setCustomerCode(firstNonBlank(document.getCustomerCode(), internalCustomerCode, "INTERNAL"))
                 .setClientFileId(document.getId() == null ? null : "document_" + document.getId())
                 .setOriginalFilename(CustomApiIds.safeFilename(originalFilename))
                 .setContentType(firstNonBlank(document.getContentType(), "application/zip"))
@@ -187,6 +198,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("source", "task-page");
         metadata.put("documentId", document.getId());
+        metadata.put("uploaderUserId", document.getUploaderUserId());
+        metadata.put("agentCode", document.getAgentCode());
         LocalDateTime now = LocalDateTime.now();
         return new CustomApiTask()
                 .setTaskId(taskId)
@@ -195,7 +208,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
                 .setClientTaskId(document.getId() == null ? null : "document_" + document.getId())
                 .setDocumentId(document.getId())
                 .setDirection("import")
-                .setCompanyCode(firstNonBlank(internalCompanyCode, "CUSTOMS"))
+                .setCompanyCode(firstNonBlank(document.getAgentCode(), internalCompanyCode, "CUSTOMS"))
                 .setResponseMode("polling")
                 .setStatus(CustomApiTask.STATUS_QUEUED)
                 .setStage("queued")
@@ -208,31 +221,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
     }
 
     private void verifyWebFile(CustomApiFile file) {
-        try (InputStream input = objectStorageService.openStream(file)) {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[8192];
-            long size = 0L;
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                if (read > 0) {
-                    digest.update(buffer, 0, read);
-                    size += read;
-                }
-            }
-            if (size < 1L) {
-                throw new JeecgBootException("uploaded ZIP is empty");
-            }
-            String sha256 = HexFormat.of().formatHex(digest.digest());
-            file.setFileSize(size)
-                    .setSha256(sha256)
-                    .setActualFileSize(size)
-                    .setActualSha256(sha256)
-                    .setVerifiedAt(LocalDateTime.now());
-        } catch (JeecgBootException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new JeecgBootException("verify uploaded ZIP failed: " + e.getMessage());
-        }
+        VerifiedFile verified = uploadedFileVerifier.verify(file);
+        file.setFileSize(verified.actualFileSize())
+                .setSha256(verified.actualSha256())
+                .setActualFileSize(verified.actualFileSize())
+                .setActualSha256(verified.actualSha256())
+                .setContentType(verified.detectedType())
+                .setVerifiedAt(LocalDateTime.now());
     }
 
     private String resolveStoragePath(Document document, String storageType) {
@@ -409,6 +404,25 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
             }
         }
         return null;
+    }
+
+    private void registerRollbackCleanup(String storagePath) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        Path path = Path.of(uploadPath, storagePath).toAbsolutePath().normalize();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (Exception ignored) {
+                        // A scheduled storage cleanup can remove a rare rollback orphan later.
+                    }
+                }
+            }
+        });
     }
 
     @SafeVarargs

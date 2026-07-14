@@ -154,16 +154,51 @@ class CustomAgentAccessServiceTest {
     }
 
     @Test
-    void rejectsGrantReplacementWhenUserIsNotEnabledForTheSameCustomer() {
+    void rejectsGrantReplacementWhenSelectedSystemUserDoesNotMatch() {
         asAdmin();
         enableAgents(agent("CUSTOMS", "通用"));
-        when(customerUserMapper.selectOne(any())).thenReturn(null);
+        when(commonAPI.getUserByName("bob")).thenReturn(new LoginUser().setId("different-id").setUsername("bob"));
         UserAgentGrantRequest request = grantRequest("CUSTOMER-A", "user-2", List.of("CUSTOMS"), "CUSTOMS");
+        request.setUsername("bob");
 
         assertThatThrownBy(() -> service.replaceUserAgents(request))
                 .isInstanceOf(JeecgBootException.class)
-                .hasMessageContaining("未绑定当前客户");
+                .hasMessageContaining("用户不存在或已变更");
         verify(userAgentMapper, never()).delete(any());
+    }
+
+    @Test
+    void replacesCustomerRelationAndAgentGrantsInOneServiceTransaction() {
+        asAdmin();
+        enableAgents(agent("CUSTOMS", "通用"));
+        when(commonAPI.getUserByName("bob")).thenReturn(
+                new LoginUser().setId("user-2").setUsername("bob").setRealname("Bob")
+        );
+        UserAgentGrantRequest request = grantRequest("CUSTOMER-A", "user-2", List.of("CUSTOMS"), "CUSTOMS");
+        request.setUsername("bob");
+
+        List<CustomUserAgent> saved = service.replaceUserAgents(request);
+
+        assertThat(saved).singleElement().satisfies(grant -> {
+            assertThat(grant.getCustomerCode()).isEqualTo("CUSTOMER-A");
+            assertThat(grant.getUserId()).isEqualTo("user-2");
+            assertThat(grant.getAgentCode()).isEqualTo("CUSTOMS");
+            assertThat(grant.getIsDefault()).isEqualTo(1);
+        });
+        verify(customerUserMapper).delete(any());
+        verify(customerUserMapper).insert(any(CustomCustomerUser.class));
+        verify(userAgentMapper).delete(any());
+        verify(userAgentMapper).insert(any(CustomUserAgent.class));
+    }
+
+    @Test
+    void aggregatedGrantDeleteRemovesBothGrantsAndCustomerRelation() {
+        asAdmin();
+
+        service.deleteUserAgents("CUSTOMER-A", "user-2");
+
+        verify(userAgentMapper).delete(any());
+        verify(customerUserMapper).delete(any());
     }
 
     @Test

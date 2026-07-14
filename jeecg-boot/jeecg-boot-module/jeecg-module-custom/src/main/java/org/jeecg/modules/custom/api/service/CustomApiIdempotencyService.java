@@ -7,7 +7,11 @@ import org.jeecg.modules.custom.api.exception.CustomApiConflictException;
 import org.jeecg.modules.custom.api.mapper.CustomApiFileMapper;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+
+import java.sql.SQLException;
+import java.util.Objects;
 
 @Service
 public class CustomApiIdempotencyService {
@@ -23,27 +27,33 @@ public class CustomApiIdempotencyService {
         if (appId == null) {
             return null;
         }
-        CustomApiFile existing = null;
-        if (!blank(clientFileId)) {
-            existing = fileMapper.selectOne(new LambdaQueryWrapper<CustomApiFile>()
+        String normalizedClientFileId = trimToNull(clientFileId);
+        String normalizedIdempotencyKey = trimToNull(idempotencyKey);
+        CustomApiFile byClientId = null;
+        CustomApiFile byIdempotencyKey = null;
+        if (normalizedClientFileId != null) {
+            byClientId = fileMapper.selectOne(new LambdaQueryWrapper<CustomApiFile>()
                     .eq(CustomApiFile::getAppId, appId)
-                    .eq(CustomApiFile::getClientFileId, clientFileId.trim()));
+                    .eq(CustomApiFile::getClientFileId, normalizedClientFileId));
         }
-        if (existing == null && !blank(idempotencyKey)) {
-            existing = fileMapper.selectOne(new LambdaQueryWrapper<CustomApiFile>()
+        if (normalizedIdempotencyKey != null) {
+            byIdempotencyKey = fileMapper.selectOne(new LambdaQueryWrapper<CustomApiFile>()
                     .eq(CustomApiFile::getAppId, appId)
-                    .eq(CustomApiFile::getIdempotencyKey, idempotencyKey.trim()));
+                    .eq(CustomApiFile::getIdempotencyKey, normalizedIdempotencyKey));
         }
-        return verifyHash(existing, requestHash, "file");
+        verifySameFile(byClientId, byIdempotencyKey);
+        return verifyHash(byClientId != null ? byClientId : byIdempotencyKey, requestHash, "file");
     }
 
     public CustomApiFile insertFileOrFindWinner(CustomApiFile candidate) {
         try {
             fileMapper.insert(candidate);
             return candidate;
-        } catch (DuplicateKeyException duplicate) {
-            CustomApiFile winner = findFile(candidate.getAppId(), candidate.getClientFileId(),
-                    candidate.getIdempotencyKey(), candidate.getRequestHash());
+        } catch (DataIntegrityViolationException duplicate) {
+            if (!isUniqueViolation(duplicate)) {
+                throw duplicate;
+            }
+            CustomApiFile winner = findFileWinner(candidate);
             if (winner == null) {
                 throw duplicate;
             }
@@ -55,18 +65,73 @@ public class CustomApiIdempotencyService {
         if (appId == null) {
             return null;
         }
-        CustomApiTask existing = null;
-        if (!blank(clientTaskId)) {
-            existing = taskMapper.selectOne(new LambdaQueryWrapper<CustomApiTask>()
+        String normalizedClientTaskId = trimToNull(clientTaskId);
+        String normalizedIdempotencyKey = trimToNull(idempotencyKey);
+        CustomApiTask byClientId = null;
+        CustomApiTask byIdempotencyKey = null;
+        if (normalizedClientTaskId != null) {
+            byClientId = taskMapper.selectOne(new LambdaQueryWrapper<CustomApiTask>()
                     .eq(CustomApiTask::getAppId, appId)
-                    .eq(CustomApiTask::getClientTaskId, clientTaskId.trim()));
+                    .eq(CustomApiTask::getClientTaskId, normalizedClientTaskId));
         }
-        if (existing == null && !blank(idempotencyKey)) {
-            existing = taskMapper.selectOne(new LambdaQueryWrapper<CustomApiTask>()
+        if (normalizedIdempotencyKey != null) {
+            byIdempotencyKey = taskMapper.selectOne(new LambdaQueryWrapper<CustomApiTask>()
                     .eq(CustomApiTask::getAppId, appId)
-                    .eq(CustomApiTask::getIdempotencyKey, idempotencyKey.trim()));
+                    .eq(CustomApiTask::getIdempotencyKey, normalizedIdempotencyKey));
         }
-        return verifyHash(existing, requestHash, "task");
+        verifySameTask(byClientId, byIdempotencyKey);
+        return verifyHash(byClientId != null ? byClientId : byIdempotencyKey, requestHash, "task");
+    }
+
+    private CustomApiFile findFileWinner(CustomApiFile candidate) {
+        for (int attempt = 0; attempt < 3; attempt++) {
+            CustomApiFile winner = findFile(candidate.getAppId(), candidate.getClientFileId(),
+                    candidate.getIdempotencyKey(), candidate.getRequestHash());
+            if (winner != null) {
+                return winner;
+            }
+            try {
+                Thread.sleep(10L * (attempt + 1));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private void verifySameFile(CustomApiFile left, CustomApiFile right) {
+        if (left != null && right != null && !sameRecord(left.getId(), right.getId(), left.getFileId(), right.getFileId())) {
+            throw new CustomApiConflictException("clientFileId and idempotency key refer to different files");
+        }
+    }
+
+    private void verifySameTask(CustomApiTask left, CustomApiTask right) {
+        if (left != null && right != null && !sameRecord(left.getId(), right.getId(), left.getTaskId(), right.getTaskId())) {
+            throw new CustomApiConflictException("clientTaskId and idempotency key refer to different tasks");
+        }
+    }
+
+    private boolean sameRecord(Long leftId, Long rightId, String leftBusinessId, String rightBusinessId) {
+        if (leftId != null && rightId != null) {
+            return leftId.equals(rightId);
+        }
+        return Objects.equals(leftBusinessId, rightBusinessId);
+    }
+
+    private boolean isUniqueViolation(DataIntegrityViolationException error) {
+        if (error instanceof DuplicateKeyException) {
+            return true;
+        }
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof SQLException sql
+                    && (sql.getErrorCode() == -6612 || "23000".equals(sql.getSQLState()))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private <T> T verifyHash(T existing, String requestHash, String resource) {
@@ -84,5 +149,9 @@ public class CustomApiIdempotencyService {
 
     private boolean blank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private String trimToNull(String value) {
+        return blank(value) ? null : value.trim();
     }
 }

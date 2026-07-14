@@ -16,8 +16,15 @@ class CustomCallbackClaimMapperContractTest {
         assertThat(CustomCallbackDelivery.class.getMethod("getClaimToken")).isNotNull();
         assertThat(CustomCallbackDelivery.class.getMethod("getClaimedBy")).isNotNull();
 
-        assertTokenCas(CustomCallbackDeliveryMapper.class.getMethod(
-                "claim", Long.class, String.class, String.class, LocalDateTime.class));
+        Method claim = CustomCallbackDeliveryMapper.class.getMethod(
+                "claim", Long.class, String.class, String.class, LocalDateTime.class);
+        assertTokenCas(claim);
+        assertThat(normalized(claim.getAnnotation(Update.class)))
+                .contains("EXISTS (SELECT 1 FROM CUSTOM_API_TASK")
+                .contains("CUSTOM_API_TASK.TASK_ID = CUSTOM_CALLBACK_DELIVERY.TASK_ID")
+                .contains("CUSTOM_API_TASK.CUSTOMS_AI_RUN_NO")
+                .contains("CUSTOM_CALLBACK_DELIVERY.RUN_NO")
+                .contains("CUSTOM_API_TASK.STATUS IN ('SUCCEEDED', 'FAILED', 'TIMEOUT', 'CANCELLED')");
         assertTokenCas(CustomCallbackDeliveryMapper.class.getMethod(
                 "markSucceeded", Long.class, String.class, int.class, LocalDateTime.class));
         assertTokenCas(CustomCallbackDeliveryMapper.class.getMethod(

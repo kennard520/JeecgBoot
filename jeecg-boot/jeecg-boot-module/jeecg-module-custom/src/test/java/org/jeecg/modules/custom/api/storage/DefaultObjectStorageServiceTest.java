@@ -5,6 +5,7 @@ import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
@@ -12,11 +13,33 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class DefaultObjectStorageServiceTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void localUploadCapabilityIsSentInAHeaderInsteadOfTheUrl() {
+        DefaultObjectStorageService storage = new DefaultObjectStorageService();
+        ReflectionTestUtils.setField(storage, "uploadType", CommonConstant.UPLOAD_TYPE_LOCAL);
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getScheme()).thenReturn("https");
+        when(request.getServerName()).thenReturn("smart-entry.citclub.org");
+        when(request.getServerPort()).thenReturn(443);
+        when(request.getContextPath()).thenReturn("");
+        CustomApiFile file = new CustomApiFile()
+                .setFileId("file-1")
+                .setContentType("application/zip")
+                .setObjectKey("custom-api/uploads/file-1/case.zip");
+
+        var response = storage.createUploadUrl(file, "secret-capability", request);
+
+        assertThat(response.getUploadUrl()).doesNotContain("secret-capability").doesNotContain("uploadToken=");
+        assertThat(response.getHeaders()).containsEntry("X-Custom-Upload-Token", "secret-capability");
+    }
 
     @Test
     void localFreezeCopiesStagingContentToNewImmutableObject() throws Exception {
@@ -66,5 +89,23 @@ class DefaultObjectStorageServiceTest {
                 .isInstanceOf(JeecgBootException.class)
                 .hasMessageContaining("already exists");
         assertThat(Files.readAllBytes(frozen)).containsExactly(7, 8, 9);
+    }
+
+    @Test
+    void deletingALocalObjectRemovesOnlyTheBoundFile() throws Exception {
+        DefaultObjectStorageService storage = new DefaultObjectStorageService();
+        ReflectionTestUtils.setField(storage, "uploadPath", tempDir.toString());
+        Path target = tempDir.resolve("custom-api/objects/file-1/version-1/case.zip");
+        Files.createDirectories(target.getParent());
+        Files.write(target, new byte[]{1, 2, 3});
+        CustomApiFile file = new CustomApiFile()
+                .setStorageType(CommonConstant.UPLOAD_TYPE_LOCAL)
+                .setStoragePath(target.toString())
+                .setObjectKey("custom-api/objects/file-1/version-1/case.zip");
+
+        storage.deleteObject(file);
+
+        assertThat(target).doesNotExist();
+        assertThat(tempDir).exists();
     }
 }

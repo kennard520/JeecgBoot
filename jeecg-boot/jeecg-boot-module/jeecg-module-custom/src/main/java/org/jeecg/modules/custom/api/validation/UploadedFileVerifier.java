@@ -143,30 +143,24 @@ public class UploadedFileVerifier {
     }
 
     private void verifyZip(Path path) throws IOException {
-        int count = 0;
+        ArchiveBudget budget = new ArchiveBudget();
         long totalUncompressed = 0L;
         long totalCompressed = 0L;
         try (ZipFile zip = ZipFile.builder().setFile(path.toFile()).get()) {
             Enumeration<ZipArchiveEntry> entries = zip.getEntries();
             while (entries.hasMoreElements()) {
                 ZipArchiveEntry entry = entries.nextElement();
-                count++;
-                if (count > maxZipEntries) {
-                    throw new JeecgBootException("ZIP contains too many entries");
-                }
+                budget.registerEntry();
                 validateEntry(entry);
                 if (entry.isDirectory()) {
                     continue;
                 }
-                long entrySize = readAndVerifyEntry(zip, entry);
+                long entrySize = readAndVerifyEntry(zip, entry, budget, true);
                 if (entrySize > maxZipEntryBytes) {
                     throw new JeecgBootException("ZIP entry exceeds maximum uncompressed size");
                 }
                 totalUncompressed += entrySize;
                 totalCompressed += Math.max(0L, entry.getCompressedSize());
-                if (totalUncompressed > maxZipTotalBytes) {
-                    throw new JeecgBootException("ZIP total uncompressed size exceeds limit");
-                }
                 enforceRatio(entrySize, entry.getCompressedSize(), "ZIP entry compression ratio exceeds limit");
             }
         }
@@ -195,34 +189,106 @@ public class UploadedFileVerifier {
         }
     }
 
-    private long readAndVerifyEntry(ZipFile zip, ZipArchiveEntry entry) throws IOException {
+    private long readAndVerifyEntry(ZipFile zip, ZipArchiveEntry entry,
+                                    ArchiveBudget budget, boolean allowOoxml) throws IOException {
         CRC32 crc = new CRC32();
         long size = 0L;
         byte[] buffer = new byte[64 * 1024];
         byte[] prefix = new byte[4];
         int prefixLength = 0;
-        try (InputStream input = zip.getInputStream(entry)) {
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                if (prefixLength < prefix.length) {
-                    int prefixBytes = Math.min(prefix.length - prefixLength, read);
-                    System.arraycopy(buffer, 0, prefix, prefixLength, prefixBytes);
-                    prefixLength += prefixBytes;
-                    if (prefixLength == prefix.length && isZipMagic(prefix)) {
-                        throw new JeecgBootException("nested ZIP archives are not allowed");
+        boolean zipMagic = false;
+        String normalizedName = entry.getName() == null ? "" : entry.getName().replace('\\', '/');
+        boolean ooxmlCandidate = allowOoxml && isOoxmlPackageName(normalizedName);
+        Path ooxmlTemp = ooxmlCandidate ? Files.createTempFile("custom-api-ooxml-", ".zip") : null;
+        OutputStream ooxmlOutput = ooxmlTemp == null ? null : Files.newOutputStream(ooxmlTemp);
+        try {
+            try (InputStream input = zip.getInputStream(entry)) {
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    if (ooxmlOutput != null) {
+                        ooxmlOutput.write(buffer, 0, read);
                     }
+                    if (prefixLength < prefix.length) {
+                        int prefixBytes = Math.min(prefix.length - prefixLength, read);
+                        System.arraycopy(buffer, 0, prefix, prefixLength, prefixBytes);
+                        prefixLength += prefixBytes;
+                        if (prefixLength == prefix.length && isZipMagic(prefix)) {
+                            if (!ooxmlCandidate) {
+                                throw new JeecgBootException("nested ZIP archives are not allowed");
+                            }
+                            zipMagic = true;
+                        }
+                    }
+                    size += read;
+                    if (size > maxZipEntryBytes) {
+                        throw new JeecgBootException("ZIP entry exceeds maximum uncompressed size");
+                    }
+                    crc.update(buffer, 0, read);
                 }
-                size += read;
-                if (size > maxZipEntryBytes) {
-                    throw new JeecgBootException("ZIP entry exceeds maximum uncompressed size");
+            } finally {
+                if (ooxmlOutput != null) {
+                    ooxmlOutput.close();
                 }
-                crc.update(buffer, 0, read);
+            }
+            if (entry.getCrc() >= 0 && crc.getValue() != entry.getCrc()) {
+                throw new JeecgBootException("ZIP entry CRC mismatch");
+            }
+            budget.addUncompressed(size);
+            if (zipMagic) {
+                verifyOoxmlPackage(ooxmlTemp, normalizedName, budget);
+            }
+            return size;
+        } finally {
+            if (ooxmlTemp != null) {
+                Files.deleteIfExists(ooxmlTemp);
             }
         }
-        if (entry.getCrc() >= 0 && crc.getValue() != entry.getCrc()) {
-            throw new JeecgBootException("ZIP entry CRC mismatch");
+    }
+
+    private void verifyOoxmlPackage(Path path, String packageName, ArchiveBudget budget) throws IOException {
+        boolean hasContentTypes = false;
+        boolean hasApplicationRoot = false;
+        String requiredRoot = requiredOoxmlRoot(packageName);
+        long totalUncompressed = 0L;
+        long totalCompressed = 0L;
+        try (ZipFile zip = ZipFile.builder().setFile(path.toFile()).get()) {
+            Enumeration<ZipArchiveEntry> entries = zip.getEntries();
+            while (entries.hasMoreElements()) {
+                ZipArchiveEntry entry = entries.nextElement();
+                budget.registerEntry();
+                validateEntry(entry);
+                String name = entry.getName() == null ? "" : entry.getName().replace('\\', '/');
+                hasContentTypes |= "[content_types].xml".equals(name.toLowerCase(Locale.ROOT));
+                hasApplicationRoot |= name.toLowerCase(Locale.ROOT).startsWith(requiredRoot);
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                long entrySize = readAndVerifyEntry(zip, entry, budget, false);
+                totalUncompressed += entrySize;
+                totalCompressed += Math.max(0L, entry.getCompressedSize());
+                enforceRatio(entrySize, entry.getCompressedSize(), "OOXML entry compression ratio exceeds limit");
+            }
         }
-        return size;
+        enforceRatio(totalUncompressed, totalCompressed, "OOXML total compression ratio exceeds limit");
+        if (!hasContentTypes || !hasApplicationRoot) {
+            throw new JeecgBootException("nested ZIP is not a valid OOXML document package");
+        }
+    }
+
+    private boolean isOoxmlPackageName(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".xlsx") || lower.endsWith(".docx") || lower.endsWith(".pptx");
+    }
+
+    private String requiredOoxmlRoot(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".xlsx")) {
+            return "xl/";
+        }
+        if (lower.endsWith(".docx")) {
+            return "word/";
+        }
+        return "ppt/";
     }
 
     private boolean isZipMagic(byte[] magic) {
@@ -243,5 +309,24 @@ public class UploadedFileVerifier {
 
     private boolean blank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private final class ArchiveBudget {
+        private int entries;
+        private long totalUncompressed;
+
+        private void registerEntry() {
+            entries++;
+            if (entries > maxZipEntries) {
+                throw new JeecgBootException("ZIP contains too many entries");
+            }
+        }
+
+        private void addUncompressed(long size) {
+            totalUncompressed += size;
+            if (totalUncompressed > maxZipTotalBytes) {
+                throw new JeecgBootException("ZIP total uncompressed size exceeds limit");
+            }
+        }
     }
 }

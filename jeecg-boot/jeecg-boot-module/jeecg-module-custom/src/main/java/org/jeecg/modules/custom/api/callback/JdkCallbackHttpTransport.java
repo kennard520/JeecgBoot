@@ -15,6 +15,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class JdkCallbackHttpTransport implements CallbackHttpTransport {
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+    private static final int MAX_RESPONSE_BODY_BYTES = 64 * 1024;
 
     private final OkHttpClient baseClient;
     private final Duration requestTimeout;
@@ -52,7 +54,11 @@ public class JdkCallbackHttpTransport implements CallbackHttpTransport {
         headers.forEach(builder::header);
         try (Response response = clientFor(target).newCall(builder.build()).execute()) {
             byte[] responseBody = response.body() == null
-                    ? new byte[0] : response.body().bytes();
+                    ? new byte[0]
+                    : response.body().byteStream().readNBytes(MAX_RESPONSE_BODY_BYTES + 1);
+            if (responseBody.length > MAX_RESPONSE_BODY_BYTES) {
+                responseBody = Arrays.copyOf(responseBody, MAX_RESPONSE_BODY_BYTES);
+            }
             return new CallbackHttpResponse(response.code(), response.headers().toMultimap(),
                     new String(responseBody, StandardCharsets.UTF_8));
         }

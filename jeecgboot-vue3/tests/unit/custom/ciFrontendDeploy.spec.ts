@@ -27,12 +27,13 @@ describe('frontend deployment workflow', () => {
     expect(workflow).toContain('systemctl reload nginx');
   });
 
-  it('checks the served index before success and rolls back frontend and backend on failure', () => {
-    const healthCheck = "curl -fkSs https://127.0.0.1/ -H 'Host: smart-entry.citclub.org'";
+  it('checks the served index with strict TLS before success and rolls back on failure', () => {
+    const healthCheck = 'curl -fSs --resolve smart-entry.citclub.org:443:127.0.0.1';
     expect(workflow).toContain(healthCheck);
+    expect(workflow).not.toContain('curl -fkSs');
     expect(workflow).toContain('grep -q \'id="app"\'');
     expect(workflow).toContain('FRONTEND_MAIN_ASSET=');
-    expect(workflow).toContain('https://127.0.0.1${FRONTEND_MAIN_ASSET}');
+    expect(workflow).toContain('https://smart-entry.citclub.org${FRONTEND_MAIN_ASSET}');
     expect(workflow).toContain('/jeecgboot/sys/getEncryptedString');
     expect(workflow.indexOf(healthCheck)).toBeLessThan(workflow.indexOf('echo "Deploy success"'));
 

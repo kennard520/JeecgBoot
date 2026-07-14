@@ -15,6 +15,7 @@ import org.jeecg.common.aspect.annotation.PermissionData;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
+import org.jeecg.modules.custom.ai.service.CustomCustomerDataScopeService;
 import org.jeecg.modules.custom.task.entity.Document;
 import org.jeecg.modules.custom.task.service.IDocumentService;
 import org.jeecg.modules.custom.task.vo.DocumentParseCallbackVo;
@@ -47,6 +48,9 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @Autowired
     private IDocumentService documentService;
 
+    @Autowired
+    private CustomCustomerDataScopeService customerDataScopeService;
+
     @Operation(summary = "分页查询文档解析任务")
     @GetMapping(value = "/list")
     @PermissionData(pageComponent = "custom/task/document")
@@ -55,6 +59,7 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
                                                  @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
                                                  HttpServletRequest req) {
         QueryWrapper<Document> queryWrapper = QueryGenerator.initQueryWrapper(document, req.getParameterMap());
+        customerDataScopeService.applyDocumentScope(queryWrapper);
         queryWrapper.orderByDesc("ID");
         Page<Document> page = new Page<>(pageNo, pageSize);
         IPage<Document> pageList = documentService.page(page, queryWrapper);
@@ -64,8 +69,10 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @AutoLog(value = "上传zip文档")
     @Operation(summary = "上传zip文档并创建文档记录")
     @PostMapping(value = "/uploadZip")
-    public Result<Document> uploadZip(@RequestParam("file") MultipartFile file) {
-        return Result.OK(documentService.uploadZip(file));
+    public Result<Document> uploadZip(@RequestParam("file") MultipartFile file,
+                                      @RequestParam(name = "agentCode", required = false) String agentCode,
+                                      @RequestParam(name = "autoStart", defaultValue = "true") boolean autoStart) {
+        return Result.OK(documentService.uploadZip(file, agentCode, autoStart));
     }
 
     @AutoLog(value = "创建文档解析任务", operateType = CommonConstant.OPERATE_TYPE_3)
@@ -80,6 +87,7 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @Operation(summary = "文档解析任务回调")
     @PostMapping(value = "/parseCallback")
     public Result<Document> parseCallback(@RequestBody DocumentParseCallbackVo callback) {
+        customerDataScopeService.requireSuperAdmin();
         Document document = Boolean.FALSE.equals(callback.getSuccess())
                 ? documentService.failParse(callback.getTaskId(), callback.getErrorMessage())
                 : documentService.completeParse(callback.getTaskId(), callback.getDecHeadId());
@@ -90,6 +98,7 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @Operation(summary = "新增文档解析任务")
     @PostMapping(value = "/add")
     public Result<?> add(@RequestBody Document document) {
+        customerDataScopeService.requireSuperAdmin();
         documentService.save(document);
         return Result.OK("添加成功！");
     }
@@ -98,6 +107,7 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @Operation(summary = "编辑文档解析任务")
     @PutMapping(value = "/edit")
     public Result<?> edit(@RequestBody Document document) {
+        customerDataScopeService.requireSuperAdmin();
         documentService.updateById(document);
         return Result.OK("更新成功！");
     }
@@ -106,6 +116,7 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @Operation(summary = "通过ID删除文档解析任务")
     @DeleteMapping(value = "/delete")
     public Result<?> delete(@RequestParam(name = "id", required = true) String id) {
+        customerDataScopeService.requireDocument(Long.valueOf(id));
         documentService.removeById(id);
         return Result.OK("删除成功！");
     }
@@ -114,7 +125,9 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @Operation(summary = "批量删除文档解析任务")
     @DeleteMapping(value = "/deleteBatch")
     public Result<?> deleteBatch(@RequestParam(name = "ids", required = true) String ids) {
-        documentService.removeByIds(Arrays.asList(ids.split(",")));
+        java.util.List<String> documentIds = Arrays.asList(ids.split(","));
+        documentIds.forEach(id -> customerDataScopeService.requireDocument(Long.valueOf(id)));
+        documentService.removeByIds(documentIds);
         return Result.OK("批量删除成功！");
     }
 
@@ -122,19 +135,21 @@ public class DocumentController extends JeecgController<Document, IDocumentServi
     @GetMapping(value = "/queryById")
     public Result<Document> queryById(@Parameter(name = "id", description = "主键ID", required = true)
                                       @RequestParam(name = "id", required = true) String id) {
-        Document document = documentService.getById(id);
+        Document document = customerDataScopeService.requireDocument(Long.valueOf(id));
         return Result.OK(document);
     }
 
     @Operation(summary = "导出文档解析任务Excel")
     @RequestMapping(value = "/exportXls")
     public ModelAndView exportXls(HttpServletRequest request, Document document) {
+        customerDataScopeService.requireSuperAdmin();
         return super.exportXls(request, document, Document.class, "文档解析任务");
     }
 
     @Operation(summary = "从Excel导入文档解析任务")
     @RequestMapping(value = "/importExcel", method = RequestMethod.POST)
     public Result<?> importExcel(HttpServletRequest request, HttpServletResponse response) {
+        customerDataScopeService.requireSuperAdmin();
         return super.importExcel(request, response, Document.class);
     }
 }

@@ -9,6 +9,8 @@ import org.jeecg.modules.custom.api.vo.CustomApiAppResponse;
 import org.jeecg.modules.custom.api.vo.CustomApiAppSaveRequest;
 import org.jeecg.modules.custom.api.vo.CustomApiAppSecretResponse;
 
+import java.util.List;
+
 public interface ICustomApiAppService extends IService<CustomApiApp> {
     AuthTokenResponse issueToken(AuthTokenRequest request);
 
@@ -21,6 +23,10 @@ public interface ICustomApiAppService extends IService<CustomApiApp> {
     CustomApiAppSecretResponse resetSecret(Long id);
 
     CustomApiAppResponse clearAccessToken(Long id);
+
+    void deleteApp(Long id);
+
+    void deleteApps(List<Long> ids);
 
     boolean appKeyExists(String appKey, Long excludeId);
 }

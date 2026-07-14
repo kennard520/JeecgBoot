@@ -77,7 +77,7 @@ describe('CustomAgentController frontend contract', () => {
     });
   });
 
-  it('saves the customer relation before replacing user grants with controller request names', async () => {
+  it('saves the customer relation and grants atomically through one request', async () => {
     put.mockResolvedValue([]);
     const payload = {
       customerCode: 'CIT',
@@ -89,11 +89,8 @@ describe('CustomAgentController frontend contract', () => {
 
     await saveAgentGrant(payload);
 
-    expect(put).toHaveBeenNthCalledWith(1, {
-      url: '/custom/ai/admin/customer-users',
-      data: { customerCode: 'CIT', userId: 'u-1', username: 'alice' },
-    });
-    expect(put).toHaveBeenNthCalledWith(2, {
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith({
       url: '/custom/ai/admin/user-grants',
       data: payload,
     });

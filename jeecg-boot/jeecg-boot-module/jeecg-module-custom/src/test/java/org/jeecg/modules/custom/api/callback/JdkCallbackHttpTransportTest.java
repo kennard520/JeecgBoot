@@ -49,4 +49,27 @@ class JdkCallbackHttpTransportTest {
         assertThatThrownBy(() -> transport.clientFor(target).dns().lookup("other.example"))
                 .isInstanceOf(UnknownHostException.class);
     }
+
+    @Test
+    void capsUntrustedCallbackResponseBodiesAt64KiB() throws Exception {
+        byte[] oversized = new byte[128 * 1024];
+        java.util.Arrays.fill(oversized, (byte) 'x');
+        Interceptor response = chain -> new Response.Builder()
+                .request(chain.request())
+                .protocol(Protocol.HTTP_1_1)
+                .code(500)
+                .message("Server Error")
+                .body(ResponseBody.create(null, oversized))
+                .build();
+        JdkCallbackHttpTransport transport = new JdkCallbackHttpTransport(
+                new OkHttpClient.Builder().addInterceptor(response).build(), Duration.ofSeconds(1));
+        ValidatedCallbackTarget target = new ValidatedCallbackTarget(
+                URI.create("https://callbacks.example/result"),
+                List.of(InetAddress.getByName("93.184.216.34")));
+
+        CallbackHttpResponse result = transport.send(target, "{}".getBytes(), Map.of());
+
+        assertThat(result.body().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .hasSize(64 * 1024);
+    }
 }

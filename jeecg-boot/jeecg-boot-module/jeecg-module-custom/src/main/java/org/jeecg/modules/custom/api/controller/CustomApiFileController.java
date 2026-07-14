@@ -51,7 +51,7 @@ public class CustomApiFileController {
     @Operation(summary = "Local upload fallback for development")
     @PostMapping("/{fileId}/content")
     public Result<?> uploadContent(@PathVariable String fileId,
-                                   @RequestParam("uploadToken") String uploadToken,
+                                   @RequestHeader("X-Custom-Upload-Token") String uploadToken,
                                    @RequestParam("file") MultipartFile file) {
         fileService.uploadLocalContent(fileId, uploadToken, file);
         return Result.OK("OK");

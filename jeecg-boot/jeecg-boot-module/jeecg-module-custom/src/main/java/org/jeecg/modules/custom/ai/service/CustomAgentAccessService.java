@@ -194,23 +194,41 @@ public class CustomAgentAccessService {
     @Transactional(rollbackFor = Exception.class)
     public List<CustomUserAgent> replaceUserAgents(UserAgentGrantRequest request) {
         requireSuperAdmin();
-        if (request == null || isBlank(request.getCustomerCode()) || isBlank(request.getUserId())) {
-            throw new JeecgBootException("customerCode 和 userId 不能为空");
+        if (request == null || isBlank(request.getCustomerCode()) || isBlank(request.getUserId())
+                || isBlank(request.getUsername())) {
+            throw new JeecgBootException("customerCode、userId 和 username 不能为空");
         }
-        requireEnabledCustomer(request.getCustomerCode());
-        requireEnabledCustomerUser(request.getCustomerCode(), request.getUserId());
+        String customerCode = request.getCustomerCode().trim();
+        String userId = request.getUserId().trim();
+        String username = request.getUsername().trim();
+        requireEnabledCustomer(customerCode);
+        LoginUser selectedUser = commonAPI.getUserByName(username);
+        if (selectedUser == null || !userId.equals(selectedUser.getId())) {
+            throw new JeecgBootException("目标用户不存在或已变更，请重新选择用户");
+        }
         List<String> codes = normalizeAgentCodes(request.getAgentCodes());
+        if (codes.isEmpty()) {
+            throw new JeecgBootException("至少授权一个智能体");
+        }
         String defaultCode = resolveDefault(codes, request.getDefaultAgentCode());
         requireEnabledAgents(codes);
         LocalDateTime now = LocalDateTime.now();
+        customerUserMapper.delete(new LambdaQueryWrapper<CustomCustomerUser>()
+                .eq(CustomCustomerUser::getUserId, userId));
+        customerUserMapper.insert(new CustomCustomerUser()
+                .setCustomerCode(customerCode)
+                .setUserId(userId)
+                .setUsername(username)
+                .setEnabled(1)
+                .setCreatedAt(now)
+                .setUpdatedAt(now));
         userAgentMapper.delete(new LambdaQueryWrapper<CustomUserAgent>()
-                .eq(CustomUserAgent::getCustomerCode, request.getCustomerCode().trim())
-                .eq(CustomUserAgent::getUserId, request.getUserId().trim()));
+                .eq(CustomUserAgent::getUserId, userId));
         List<CustomUserAgent> saved = new ArrayList<>();
         for (String code : codes) {
             CustomUserAgent grant = new CustomUserAgent()
-                    .setCustomerCode(request.getCustomerCode().trim())
-                    .setUserId(request.getUserId().trim())
+                    .setCustomerCode(customerCode)
+                    .setUserId(userId)
                     .setAgentCode(code)
                     .setIsDefault(code.equals(defaultCode) ? 1 : 0)
                     .setEnabled(1)
@@ -299,6 +317,9 @@ public class CustomAgentAccessService {
         userAgentMapper.delete(new LambdaQueryWrapper<CustomUserAgent>()
                 .eq(CustomUserAgent::getCustomerCode, customerCode.trim())
                 .eq(CustomUserAgent::getUserId, userId.trim()));
+        customerUserMapper.delete(new LambdaQueryWrapper<CustomCustomerUser>()
+                .eq(CustomCustomerUser::getCustomerCode, customerCode.trim())
+                .eq(CustomCustomerUser::getUserId, userId.trim()));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -318,6 +339,9 @@ public class CustomAgentAccessService {
             throw new JeecgBootException("appId 不能为空");
         }
         List<String> codes = normalizeAgentCodes(request.getAgentCodes());
+        if (codes.isEmpty()) {
+            throw new JeecgBootException("至少授权一个智能体");
+        }
         String defaultCode = resolveDefault(codes, request.getDefaultAgentCode());
         requireEnabledAgents(codes);
         LocalDateTime now = LocalDateTime.now();
@@ -381,16 +405,6 @@ public class CustomAgentAccessService {
                 .eq(CustomCustomer::getEnabled, 1));
         if (customer == null) {
             throw new JeecgBootException("客户不存在或已停用");
-        }
-    }
-
-    private void requireEnabledCustomerUser(String customerCode, String userId) {
-        CustomCustomerUser relation = customerUserMapper.selectOne(new LambdaQueryWrapper<CustomCustomerUser>()
-                .eq(CustomCustomerUser::getCustomerCode, customerCode.trim())
-                .eq(CustomCustomerUser::getUserId, userId.trim())
-                .eq(CustomCustomerUser::getEnabled, 1));
-        if (relation == null) {
-            throw new JeecgBootException("目标用户未绑定当前客户或关系已停用");
         }
     }
 

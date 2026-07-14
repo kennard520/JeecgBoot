@@ -31,6 +31,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.LinkOption;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
@@ -86,9 +87,10 @@ public class DefaultObjectStorageService implements ObjectStorageService {
         }
         file.setStorageType(CommonConstant.UPLOAD_TYPE_LOCAL);
         file.setBucket(null);
-        String uploadUrl = CommonUtils.getBaseUrl(request) + "/custom/api/files/" + file.getFileId()
-                + "/content?uploadToken=" + uploadToken;
-        return response(file, "POST", uploadUrl, expiresAt);
+        String uploadUrl = CommonUtils.getBaseUrl(request) + "/custom/api/files/" + file.getFileId() + "/content";
+        FileUploadUrlResponse response = response(file, "POST", uploadUrl, expiresAt);
+        response.getHeaders().put("X-Custom-Upload-Token", uploadToken);
+        return response;
     }
 
     @Override
@@ -166,15 +168,47 @@ public class DefaultObjectStorageService implements ObjectStorageService {
     }
 
     @Override
+    public void deleteObject(CustomApiFile file) {
+        if (file == null) {
+            return;
+        }
+        try {
+            if (CommonConstant.UPLOAD_TYPE_LOCAL.equals(file.getStorageType())) {
+                Path target = requireManagedLocalFile(file.getStoragePath(), false);
+                Files.deleteIfExists(target);
+                return;
+            }
+            if (CommonConstant.UPLOAD_TYPE_OSS.equals(file.getStorageType())) {
+                OSSClient client = new OSSClient(ossEndpoint, new DefaultCredentialProvider(ossAccessKey, ossSecretKey), null);
+                try {
+                    client.deleteObject(file.getBucket(), file.getObjectKey());
+                } finally {
+                    client.shutdown();
+                }
+                return;
+            }
+            if (isTencentCos(file.getStorageType())) {
+                COSClient client = createCosClient();
+                try {
+                    client.deleteObject(file.getBucket(), file.getObjectKey());
+                } finally {
+                    client.shutdown();
+                }
+            }
+        } catch (JeecgBootException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new JeecgBootException("delete object failed: " + e.getMessage());
+        }
+    }
+
+    @Override
     public InputStream openStream(CustomApiFile file) throws IOException {
         if (CommonConstant.UPLOAD_TYPE_LOCAL.equals(file.getStorageType())) {
             if (file.getStoragePath() == null || file.getStoragePath().isBlank()) {
                 throw new JeecgBootException("local upload path is missing");
             }
-            Path source = Path.of(file.getStoragePath());
-            if (!Files.isRegularFile(source)) {
-                throw new JeecgBootException("local upload file not found");
-            }
+            Path source = requireManagedLocalFile(file.getStoragePath(), true);
             return Files.newInputStream(source);
         }
         if (CommonConstant.UPLOAD_TYPE_OSS.equals(file.getStorageType())) {
@@ -212,11 +246,7 @@ public class DefaultObjectStorageService implements ObjectStorageService {
             Files.createDirectories(workDir);
             Path target = workDir.resolve(file.getOriginalFilename());
             if (CommonConstant.UPLOAD_TYPE_LOCAL.equals(file.getStorageType())) {
-                Path source = Path.of(file.getStoragePath());
-                if (!Files.exists(source)) {
-                    throw new JeecgBootException("local upload file not found");
-                }
-                return source;
+                return requireManagedLocalFile(file.getStoragePath(), true);
             }
             if (CommonConstant.UPLOAD_TYPE_OSS.equals(file.getStorageType())) {
                 try (InputStream in = OssBootUtil.getOssFile(file.getObjectKey(), file.getBucket())) {
@@ -321,10 +351,7 @@ public class DefaultObjectStorageService implements ObjectStorageService {
         if (file.getStoragePath() == null || file.getStoragePath().isBlank()) {
             throw new JeecgBootException("local upload path is missing");
         }
-        Path source = Path.of(file.getStoragePath()).toAbsolutePath().normalize();
-        if (!Files.isRegularFile(source)) {
-            throw new JeecgBootException("local upload file not found");
-        }
+        Path source = requireManagedLocalFile(file.getStoragePath(), true);
         Path target = resolveLocalObjectPath(immutableObjectKey);
         if (Files.exists(target)) {
             throw new JeecgBootException("immutable local object already exists");
@@ -366,12 +393,47 @@ public class DefaultObjectStorageService implements ObjectStorageService {
     }
 
     private Path resolveLocalObjectPath(String objectKey) {
-        Path root = Path.of(uploadPath).toAbsolutePath().normalize();
-        Path target = root.resolve(objectKey).normalize();
-        if (!target.startsWith(root)) {
-            throw new JeecgBootException("immutable object key escapes upload root");
+        try {
+            Path root = Path.of(uploadPath).toAbsolutePath().normalize();
+            Files.createDirectories(root);
+            Path target = root.resolve(objectKey).normalize();
+            if (!target.startsWith(root)) {
+                throw new JeecgBootException("immutable object key escapes upload root");
+            }
+            Files.createDirectories(target.getParent());
+            if (!target.getParent().toRealPath().startsWith(root.toRealPath())) {
+                throw new JeecgBootException("immutable object path escapes upload root");
+            }
+            return target;
+        } catch (JeecgBootException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new JeecgBootException("resolve immutable object path failed: " + e.getMessage());
         }
-        return target;
+    }
+
+    private Path requireManagedLocalFile(String storagePath, boolean mustExist) throws IOException {
+        if (storagePath == null || storagePath.isBlank()) {
+            throw new JeecgBootException("local upload path is missing");
+        }
+        Path root = Path.of(uploadPath).toAbsolutePath().normalize();
+        Files.createDirectories(root);
+        Path source = Path.of(storagePath).toAbsolutePath().normalize();
+        if (!source.startsWith(root) || Files.isSymbolicLink(source)) {
+            throw new JeecgBootException("local upload path is outside the managed root or is a symbolic link");
+        }
+        if (mustExist && !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
+            throw new JeecgBootException("local upload file not found");
+        }
+        if (!mustExist && Files.exists(source, LinkOption.NOFOLLOW_LINKS)
+                && !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) {
+            throw new JeecgBootException("local object is not a regular file");
+        }
+        Path parent = source.getParent();
+        if (parent == null || (Files.exists(parent) && !parent.toRealPath().startsWith(root.toRealPath()))) {
+            throw new JeecgBootException("local upload path escapes the managed root");
+        }
+        return source;
     }
 
     private void moveReplacing(Path source, Path target) throws IOException {

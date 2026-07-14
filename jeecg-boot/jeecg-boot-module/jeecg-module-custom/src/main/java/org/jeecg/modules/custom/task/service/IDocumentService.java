@@ -14,7 +14,11 @@ public interface IDocumentService extends IService<Document> {
     /**
      * 保存用户上传的 zip 文件，并创建文档记录。
      */
-    Document uploadZip(MultipartFile file);
+    default Document uploadZip(MultipartFile file) {
+        return uploadZip(file, null, false);
+    }
+
+    Document uploadZip(MultipartFile file, String agentCode, boolean autoStart);
 
     /**
      * 创建解析任务，记录任务 ID 和开始时间。

@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import jakarta.servlet.http.HttpServletRequest;
 import org.jeecg.common.exception.JeecgBootException;
+import org.jeecg.modules.custom.ai.service.CustomAgentAccessService;
+import org.jeecg.modules.custom.ai.vo.ApiAppAgentGrantRequest;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.mapper.CustomApiAppMapper;
 import org.jeecg.modules.custom.api.service.ICustomApiAppService;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, CustomApiApp> implements ICustomApiAppService {
@@ -29,6 +32,9 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
 
     @Autowired
     private CustomApiRateLimiter rateLimiter;
+
+    @Autowired
+    private CustomAgentAccessService agentAccessService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -44,12 +50,13 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
                 .setAppKey(request.getAppKey().trim())
                 .setAppSecretHash(CustomApiCrypto.sha256(appSecret))
                 .setCustomerCode(request.getCustomerCode().trim())
-                .setCompanyCode(request.getCompanyCode().trim())
+                .setCompanyCode(resolveDefaultAgentCode(request))
                 .setEnabled(request.getEnabled() == null ? 1 : request.getEnabled())
                 .setRateLimit(request.getRateLimit() == null ? 60 : request.getRateLimit())
                 .setCreatedAt(now)
                 .setUpdatedAt(now);
         save(app);
+        agentAccessService.replaceApiAppAgents(toAgentGrantRequest(app.getId(), request));
         return CustomApiAppSecretResponse.fromApp(CustomApiAppResponse.fromEntity(app), appSecret);
     }
 
@@ -67,11 +74,12 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
 
         app.setAppKey(request.getAppKey().trim())
                 .setCustomerCode(request.getCustomerCode().trim())
-                .setCompanyCode(request.getCompanyCode().trim())
+                .setCompanyCode(resolveDefaultAgentCode(request))
                 .setEnabled(request.getEnabled() == null ? 1 : request.getEnabled())
                 .setRateLimit(request.getRateLimit() == null ? 60 : request.getRateLimit())
                 .setUpdatedAt(LocalDateTime.now());
         updateById(app);
+        agentAccessService.replaceApiAppAgents(toAgentGrantRequest(app.getId(), request));
         return CustomApiAppResponse.fromEntity(app);
     }
 
@@ -103,6 +111,26 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
         app.setUpdatedAt(LocalDateTime.now());
         updateById(app);
         return CustomApiAppResponse.fromEntity(app);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteApp(Long id) {
+        if (id == null) {
+            return;
+        }
+        agentAccessService.deleteApiAppAgents(id);
+        removeById(id);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteApps(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return;
+        }
+        ids.forEach(agentAccessService::deleteApiAppAgents);
+        removeByIds(ids);
     }
 
     @Override
@@ -188,5 +216,23 @@ public class CustomApiAppServiceImpl extends ServiceImpl<CustomApiAppMapper, Cus
         if (isBlank(request.getCompanyCode())) {
             throw new JeecgBootException("companyCode is required");
         }
+    }
+
+    private ApiAppAgentGrantRequest toAgentGrantRequest(Long appId, CustomApiAppSaveRequest request) {
+        List<String> agentCodes = request.getAgentCodes();
+        if (agentCodes == null || agentCodes.isEmpty()) {
+            agentCodes = List.of(request.getCompanyCode().trim());
+        }
+        ApiAppAgentGrantRequest grants = new ApiAppAgentGrantRequest();
+        grants.setAppId(appId);
+        grants.setAgentCodes(agentCodes);
+        grants.setDefaultAgentCode(resolveDefaultAgentCode(request));
+        return grants;
+    }
+
+    private String resolveDefaultAgentCode(CustomApiAppSaveRequest request) {
+        return isBlank(request.getDefaultAgentCode())
+                ? request.getCompanyCode().trim()
+                : request.getDefaultAgentCode().trim();
     }
 }

@@ -2,7 +2,6 @@ import { defHttp } from '/@/utils/http/axios';
 
 enum Api {
   userGrants = '/custom/ai/admin/user-grants',
-  customerUserSave = '/custom/ai/admin/customer-users',
   agentList = '/custom/ai/admin/agents',
   customerList = '/custom/ai/admin/customers',
 }
@@ -32,17 +31,7 @@ export const listEnabledCustomers = async () => {
   return recordsOf(result).filter((item) => `${item.enabled ?? 1}` === '1');
 };
 
-export const saveAgentGrant = async (data) => {
-  await defHttp.put({
-    url: Api.customerUserSave,
-    data: {
-      customerCode: data.customerCode,
-      userId: data.userId,
-      username: data.username,
-    },
-  });
-  return defHttp.put({ url: Api.userGrants, data });
-};
+export const saveAgentGrant = (data) => defHttp.put({ url: Api.userGrants, data });
 
 export const deleteAgentGrant = (record) =>
   defHttp.delete(

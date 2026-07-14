@@ -15,6 +15,7 @@ import org.jeecg.common.aspect.annotation.PermissionData;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
+import org.jeecg.modules.custom.ai.service.CustomCustomerDataScopeService;
 import org.jeecg.modules.custom.cit.entity.DecHead;
 import org.jeecg.modules.custom.cit.service.IDecHeadService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +48,9 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @Autowired
     private IDecHeadService decHeadService;
 
+    @Autowired
+    private CustomCustomerDataScopeService customerDataScopeService;
+
     /**
      * 分页查询 进口/出口报关单表头 DecHead。
      *
@@ -66,6 +70,7 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
                                                       @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
                                                       HttpServletRequest req) {
         QueryWrapper<DecHead> queryWrapper = QueryGenerator.initQueryWrapper(decHead, req.getParameterMap());
+        customerDataScopeService.applyDecHeadScope(queryWrapper);
         queryWrapper.orderByDesc("ID");
         Page<DecHead> page = new Page<>(pageNo, pageSize);
         IPage<DecHead> pageList = decHeadService.page(page, queryWrapper);
@@ -83,6 +88,7 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @Operation(summary = "新增进口/出口报关单表头 DecHead")
     @PostMapping(value = "/add")
     public Result<?> add(@RequestBody DecHead decHead) {
+        customerDataScopeService.stampNewDecHead(decHead);
         decHeadService.save(decHead);
         return Result.OK("添加成功！");
     }
@@ -97,6 +103,8 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @Operation(summary = "编辑进口/出口报关单表头 DecHead")
     @PutMapping(value = "/edit")
     public Result<?> edit(@RequestBody DecHead decHead) {
+        DecHead existing = customerDataScopeService.requireDecHead(decHead.getId());
+        customerDataScopeService.preserveDecHeadOwnership(decHead, existing);
         decHeadService.updateById(decHead);
         return Result.OK("更新成功！");
     }
@@ -111,6 +119,7 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @Operation(summary = "通过ID删除进口/出口报关单表头 DecHead")
     @DeleteMapping(value = "/delete")
     public Result<?> delete(@RequestParam(name = "id", required = true) String id) {
+        customerDataScopeService.requireDecHead(Long.valueOf(id));
         decHeadService.removeById(id);
         return Result.OK("删除成功！");
     }
@@ -125,7 +134,9 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @Operation(summary = "批量删除进口/出口报关单表头 DecHead")
     @DeleteMapping(value = "/deleteBatch")
     public Result<?> deleteBatch(@RequestParam(name = "ids", required = true) String ids) {
-        decHeadService.removeByIds(Arrays.asList(ids.split(",")));
+        java.util.List<String> headIds = Arrays.asList(ids.split(","));
+        headIds.forEach(id -> customerDataScopeService.requireDecHead(Long.valueOf(id)));
+        decHeadService.removeByIds(headIds);
         return Result.OK("批量删除成功！");
     }
 
@@ -139,7 +150,7 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @GetMapping(value = "/queryById")
     public Result<DecHead> queryById(@Parameter(name = "id", description = "主键ID", required = true)
                                           @RequestParam(name = "id", required = true) String id) {
-        DecHead decHead = decHeadService.getById(id);
+        DecHead decHead = customerDataScopeService.requireDecHead(Long.valueOf(id));
         return Result.OK(decHead);
     }
 
@@ -153,6 +164,7 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @Operation(summary = "导出进口/出口报关单表头 DecHeadExcel")
     @RequestMapping(value = "/exportXls")
     public ModelAndView exportXls(HttpServletRequest request, DecHead decHead) {
+        customerDataScopeService.requireSuperAdmin();
         return super.exportXls(request, decHead, DecHead.class, "进口/出口报关单表头 DecHead");
     }
 
@@ -166,6 +178,7 @@ public class DecHeadController extends JeecgController<DecHead, IDecHeadService>
     @Operation(summary = "从Excel导入进口/出口报关单表头 DecHead")
     @RequestMapping(value = "/importExcel", method = RequestMethod.POST)
     public Result<?> importExcel(HttpServletRequest request, HttpServletResponse response) {
+        customerDataScopeService.requireSuperAdmin();
         return super.importExcel(request, response, DecHead.class);
     }
 }

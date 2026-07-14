@@ -15,6 +15,7 @@ import org.jeecg.common.aspect.annotation.PermissionData;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
+import org.jeecg.modules.custom.ai.service.CustomCustomerDataScopeService;
 import org.jeecg.modules.custom.cit.entity.DecList;
 import org.jeecg.modules.custom.cit.service.IDecListService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +48,9 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @Autowired
     private IDecListService decListService;
 
+    @Autowired
+    private CustomCustomerDataScopeService customerDataScopeService;
+
     /**
      * 分页查询 进口/出口报关单表体 DecList。
      *
@@ -66,6 +70,7 @@ public class DecListController extends JeecgController<DecList, IDecListService>
                                                       @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
                                                       HttpServletRequest req) {
         QueryWrapper<DecList> queryWrapper = QueryGenerator.initQueryWrapper(decList, req.getParameterMap());
+        customerDataScopeService.applyDecListScope(queryWrapper);
         queryWrapper.orderByDesc("ID");
         Page<DecList> page = new Page<>(pageNo, pageSize);
         IPage<DecList> pageList = decListService.page(page, queryWrapper);
@@ -83,6 +88,7 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @Operation(summary = "新增进口/出口报关单表体 DecList")
     @PostMapping(value = "/add")
     public Result<?> add(@RequestBody DecList decList) {
+        customerDataScopeService.requireDecHeadAccess(decList.getDecHeadId());
         decListService.save(decList);
         return Result.OK("添加成功！");
     }
@@ -97,6 +103,10 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @Operation(summary = "编辑进口/出口报关单表体 DecList")
     @PutMapping(value = "/edit")
     public Result<?> edit(@RequestBody DecList decList) {
+        DecList existing = customerDataScopeService.requireDecList(decList.getId());
+        Long decHeadId = decList.getDecHeadId() == null ? existing.getDecHeadId() : decList.getDecHeadId();
+        customerDataScopeService.requireDecHeadAccess(decHeadId);
+        decList.setDecHeadId(decHeadId);
         decListService.updateById(decList);
         return Result.OK("更新成功！");
     }
@@ -111,6 +121,7 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @Operation(summary = "通过ID删除进口/出口报关单表体 DecList")
     @DeleteMapping(value = "/delete")
     public Result<?> delete(@RequestParam(name = "id", required = true) String id) {
+        customerDataScopeService.requireDecList(Long.valueOf(id));
         decListService.removeById(id);
         return Result.OK("删除成功！");
     }
@@ -125,7 +136,9 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @Operation(summary = "批量删除进口/出口报关单表体 DecList")
     @DeleteMapping(value = "/deleteBatch")
     public Result<?> deleteBatch(@RequestParam(name = "ids", required = true) String ids) {
-        decListService.removeByIds(Arrays.asList(ids.split(",")));
+        java.util.List<String> rowIds = Arrays.asList(ids.split(","));
+        rowIds.forEach(id -> customerDataScopeService.requireDecList(Long.valueOf(id)));
+        decListService.removeByIds(rowIds);
         return Result.OK("批量删除成功！");
     }
 
@@ -139,7 +152,7 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @GetMapping(value = "/queryById")
     public Result<DecList> queryById(@Parameter(name = "id", description = "主键ID", required = true)
                                           @RequestParam(name = "id", required = true) String id) {
-        DecList decList = decListService.getById(id);
+        DecList decList = customerDataScopeService.requireDecList(Long.valueOf(id));
         return Result.OK(decList);
     }
 
@@ -153,6 +166,7 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @Operation(summary = "导出进口/出口报关单表体 DecListExcel")
     @RequestMapping(value = "/exportXls")
     public ModelAndView exportXls(HttpServletRequest request, DecList decList) {
+        customerDataScopeService.requireSuperAdmin();
         return super.exportXls(request, decList, DecList.class, "进口/出口报关单表体 DecList");
     }
 
@@ -166,6 +180,7 @@ public class DecListController extends JeecgController<DecList, IDecListService>
     @Operation(summary = "从Excel导入进口/出口报关单表体 DecList")
     @RequestMapping(value = "/importExcel", method = RequestMethod.POST)
     public Result<?> importExcel(HttpServletRequest request, HttpServletResponse response) {
+        customerDataScopeService.requireSuperAdmin();
         return super.importExcel(request, response, DecList.class);
     }
 }

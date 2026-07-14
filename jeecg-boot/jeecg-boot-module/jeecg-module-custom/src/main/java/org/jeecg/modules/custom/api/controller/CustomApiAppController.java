@@ -14,6 +14,7 @@ import org.jeecg.common.aspect.annotation.PermissionData;
 import org.jeecg.common.constant.CommonConstant;
 import org.jeecg.common.system.base.controller.JeecgController;
 import org.jeecg.common.system.query.QueryGenerator;
+import org.jeecg.modules.custom.ai.service.CustomAgentAccessService;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.service.ICustomApiAppService;
 import org.jeecg.modules.custom.api.vo.CustomApiAppResponse;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -42,6 +44,9 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @Autowired
     private ICustomApiAppService appService;
 
+    @Autowired
+    private CustomAgentAccessService accessService;
+
     @Operation(summary = "Page query external API apps")
     @GetMapping(value = "/list")
     @PermissionData(pageComponent = "custom/api/app")
@@ -49,6 +54,7 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
                                                              @RequestParam(name = "pageNo", defaultValue = "1") Integer pageNo,
                                                              @RequestParam(name = "pageSize", defaultValue = "10") Integer pageSize,
                                                              HttpServletRequest req) {
+        accessService.requireSuperAdmin();
         app.setAppSecretHash(null);
         app.setAccessTokenHash(null);
         QueryWrapper<CustomApiApp> queryWrapper = QueryGenerator.initQueryWrapper(app, req.getParameterMap());
@@ -62,6 +68,7 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @Operation(summary = "Create external API app")
     @PostMapping(value = "/add")
     public Result<CustomApiAppSecretResponse> add(@RequestBody CustomApiAppSaveRequest request) {
+        accessService.requireSuperAdmin();
         return Result.OK(appService.createApp(request));
     }
 
@@ -69,6 +76,7 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @Operation(summary = "Update external API app")
     @PutMapping(value = "/edit")
     public Result<CustomApiAppResponse> edit(@RequestBody CustomApiAppSaveRequest request) {
+        accessService.requireSuperAdmin();
         return Result.OK(appService.updateApp(request));
     }
 
@@ -76,6 +84,7 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @Operation(summary = "Reset external API app secret")
     @PostMapping(value = "/resetSecret")
     public Result<CustomApiAppSecretResponse> resetSecret(@RequestParam(name = "id") Long id) {
+        accessService.requireSuperAdmin();
         return Result.OK(appService.resetSecret(id));
     }
 
@@ -83,6 +92,7 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @Operation(summary = "Clear external API access token")
     @PostMapping(value = "/clearAccessToken")
     public Result<CustomApiAppResponse> clearAccessToken(@RequestParam(name = "id") Long id) {
+        accessService.requireSuperAdmin();
         return Result.OK(appService.clearAccessToken(id));
     }
 
@@ -90,7 +100,8 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @Operation(summary = "Delete external API app by id")
     @DeleteMapping(value = "/delete")
     public Result<?> delete(@RequestParam(name = "id", required = true) String id) {
-        appService.removeById(id);
+        accessService.requireSuperAdmin();
+        appService.deleteApp(Long.valueOf(id.trim()));
         return Result.OK("删除成功");
     }
 
@@ -98,7 +109,13 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @Operation(summary = "Batch delete external API apps")
     @DeleteMapping(value = "/deleteBatch")
     public Result<?> deleteBatch(@RequestParam(name = "ids", required = true) String ids) {
-        appService.removeByIds(Arrays.asList(ids.split(",")));
+        accessService.requireSuperAdmin();
+        List<Long> appIds = Arrays.stream(ids.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .map(Long::valueOf)
+                .toList();
+        appService.deleteApps(appIds);
         return Result.OK("批量删除成功");
     }
 
@@ -106,6 +123,7 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @GetMapping(value = "/queryById")
     public Result<CustomApiAppResponse> queryById(@Parameter(name = "id", description = "id", required = true)
                                                   @RequestParam(name = "id", required = true) String id) {
+        accessService.requireSuperAdmin();
         return Result.OK(CustomApiAppResponse.fromEntity(appService.getById(id)));
     }
 
@@ -113,6 +131,7 @@ public class CustomApiAppController extends JeecgController<CustomApiApp, ICusto
     @GetMapping(value = "/checkAppKey")
     public Result<Map<String, Boolean>> checkAppKey(@RequestParam(name = "appKey") String appKey,
                                                     @RequestParam(name = "id", required = false) Long id) {
+        accessService.requireSuperAdmin();
         return Result.OK(Collections.singletonMap("exists", appService.appKeyExists(appKey, id)));
     }
 }

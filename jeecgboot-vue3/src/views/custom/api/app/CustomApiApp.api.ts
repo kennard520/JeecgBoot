@@ -52,20 +52,17 @@ export const list = async (params) => {
 export const saveOrUpdate = async (params, isUpdate) => {
   const url = isUpdate ? Api.edit : Api.save;
   const normalized = buildApiAppAgentPayload(params);
-  const { allowedAgentCodes, defaultAgentCode, agentCodes: _agentCodes, ...data } = normalized;
+  const { allowedAgentCodes, defaultAgentCode, agentCodes: _agentCodes, ...base } = normalized;
+  const data = {
+    ...base,
+    agentCodes: allowedAgentCodes,
+    defaultAgentCode,
+  };
   const result = isUpdate ? await defHttp.put({ url, data }) : await defHttp.post({ url, data });
   const appId = result?.id || params.id;
   if (!appId) {
     throw new Error('API 应用保存成功但未返回 appId');
   }
-  await defHttp.put({
-    url: Api.appGrants,
-    data: {
-      appId,
-      agentCodes: allowedAgentCodes,
-      defaultAgentCode,
-    },
-  });
   return { ...result, allowedAgentCodes, defaultAgentCode };
 };
 

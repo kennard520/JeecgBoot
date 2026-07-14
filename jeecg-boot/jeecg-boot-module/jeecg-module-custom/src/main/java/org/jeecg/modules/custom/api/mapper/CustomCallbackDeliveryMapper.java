@@ -12,7 +12,11 @@ public interface CustomCallbackDeliveryMapper extends BaseMapper<CustomCallbackD
     @Update("UPDATE CUSTOM_CALLBACK_DELIVERY SET STATUS = 'SENDING', CLAIM_TOKEN = #{claimToken}, "
             + "CLAIMED_BY = #{claimedBy}, CLAIMED_AT = #{now}, "
             + "LAST_ATTEMPT_AT = #{now}, UPDATED_AT = #{now} WHERE ID = #{id} AND STATUS = 'PENDING' "
-            + "AND (NEXT_ATTEMPT_AT IS NULL OR NEXT_ATTEMPT_AT <= #{now})")
+            + "AND (NEXT_ATTEMPT_AT IS NULL OR NEXT_ATTEMPT_AT <= #{now}) "
+            + "AND EXISTS (SELECT 1 FROM CUSTOM_API_TASK "
+            + "WHERE CUSTOM_API_TASK.TASK_ID = CUSTOM_CALLBACK_DELIVERY.TASK_ID "
+            + "AND NVL(CUSTOM_API_TASK.CUSTOMS_AI_RUN_NO, 1) = NVL(CUSTOM_CALLBACK_DELIVERY.RUN_NO, 1) "
+            + "AND CUSTOM_API_TASK.STATUS IN ('succeeded', 'failed', 'timeout', 'cancelled'))")
     int claim(@Param("id") Long id,
               @Param("claimToken") String claimToken,
               @Param("claimedBy") String claimedBy,

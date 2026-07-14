@@ -42,6 +42,7 @@ import org.jeecg.modules.custom.task.entity.Document;
 import org.jeecg.modules.custom.task.service.IDocumentService;
 import org.jeecg.modules.custom.ai.service.CustomAgentAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,6 +50,7 @@ import javax.sql.DataSource;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -71,6 +73,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, CustomApiTask> implements ICustomApiTaskService {
     private static final int ERROR_CODE_MAX_LENGTH = 100;
     private static final int ERROR_MESSAGE_MAX_LENGTH = 1000;
+    private static final int CALLBACK_SECRET_MAX_BYTES = 512;
     private final Map<Class<?>, Map<String, Integer>> columnSizeCache = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper = JsonMapper.builder()
@@ -146,6 +149,9 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
             if (isBlank(request.getCallbackUrl()) || isBlank(request.getCallbackSecret())) {
                 throw new JeecgBootException("callbackUrl and callbackSecret are required for callback mode");
             }
+            if (request.getCallbackSecret().getBytes(StandardCharsets.UTF_8).length > CALLBACK_SECRET_MAX_BYTES) {
+                throw new JeecgBootException("callbackSecret must not exceed 512 bytes");
+            }
             callbackUrlPolicy.validate(request.getCallbackUrl());
             encryptedSecret = callbackSecretCipher.encrypt(request.getCallbackSecret());
         }
@@ -154,6 +160,8 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         LocalDateTime now = LocalDateTime.now();
         Document document = new Document();
         document.markUploaded(file.getOriginalFilename(), storagePath(file), file.getStorageType(), file.getFileSize(), file.getContentType());
+        document.setCustomerCode(app.getCustomerCode())
+                .setAgentCode(agentCode);
         document.markParseStarted(taskId);
         documentService.save(document);
 
@@ -162,7 +170,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 .setTaskId(taskId)
                 .setFileId(file.getFileId())
                 .setCustomerCode(app.getCustomerCode())
-                .setClientTaskId(request.getClientTaskId())
+                .setClientTaskId(trimToNull(request.getClientTaskId()))
                 .setIdempotencyKey(isBlank(idempotencyKey) ? null : idempotencyKey.trim())
                 .setRequestHash(requestHash)
                 .setDocumentId(document.getId())
@@ -181,10 +189,40 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 .setVersion(0)
                 .setMetadataJson(request.getMetadata() == null ? null : JSON.toJSONString(request.getMetadata()))
                 .setCreatedAt(now);
-        save(task);
+        try {
+            save(task);
+        } catch (DataIntegrityViolationException duplicate) {
+            CustomApiTask winner = findConcurrentTaskWinner(
+                    app.getId(), request.getClientTaskId(), idempotencyKey, requestHash);
+            if (winner == null) {
+                throw duplicate;
+            }
+            if (document.getId() != null && !documentService.removeById(document.getId())) {
+                throw new JeecgBootException("failed to clean up concurrent task document");
+            }
+            return toResponse(winner);
+        }
 
         outboxService.enqueueParseTask(task, file, 1);
         return toResponse(task);
+    }
+
+    private CustomApiTask findConcurrentTaskWinner(Long appId, String clientTaskId,
+                                                   String idempotencyKey, String requestHash) {
+        for (int attempt = 0; attempt < 3; attempt++) {
+            CustomApiTask winner = idempotencyService.findTask(
+                    appId, clientTaskId, idempotencyKey, requestHash);
+            if (winner != null) {
+                return winner;
+            }
+            try {
+                Thread.sleep(10L * (attempt + 1));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -488,6 +526,10 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private String trimToNull(String value) {
+        return isBlank(value) ? null : value.trim();
     }
 
     private String truncate(String value, int maxLength) {
