@@ -6,12 +6,19 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice(basePackages = "org.jeecg.modules.custom.api.controller")
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class CustomApiExceptionHandler {
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Result<?>> malformedJson(HttpMessageNotReadableException error) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Result.error(HttpStatus.BAD_REQUEST.value(), "malformed JSON request"));
+    }
 
     @ExceptionHandler(CustomApiUnauthorizedException.class)
     public ResponseEntity<Result<?>> unauthorized(CustomApiUnauthorizedException error) {

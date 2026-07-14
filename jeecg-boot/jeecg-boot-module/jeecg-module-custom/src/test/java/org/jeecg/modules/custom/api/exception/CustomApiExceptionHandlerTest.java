@@ -1,13 +1,23 @@
 package org.jeecg.modules.custom.api.exception;
 
 import org.jeecg.common.api.vo.Result;
+import org.jeecg.modules.custom.api.controller.CustomApiAuthController;
+import org.jeecg.modules.custom.api.service.ICustomApiAppService;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class CustomApiExceptionHandlerTest {
 
@@ -43,5 +53,23 @@ class CustomApiExceptionHandlerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
         assertThat(response.getBody().getMessage()).isEqualTo("missing X-Custom-Api-Token");
+    }
+
+    @Test
+    void malformedJsonReturnsCleanHttp400() throws Exception {
+        CustomApiAuthController controller = new CustomApiAuthController();
+        ReflectionTestUtils.setField(controller, "appService", mock(ICustomApiAppService.class));
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new CustomApiExceptionHandler())
+                .build();
+
+        mockMvc.perform(post("/custom/api/auth/token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{appKey:"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(HttpStatus.BAD_REQUEST.value()))
+                .andExpect(jsonPath("$.message").value("malformed JSON request"))
+                .andExpect(jsonPath("$.trace").doesNotExist())
+                .andExpect(jsonPath("$.exception").doesNotExist());
     }
 }
