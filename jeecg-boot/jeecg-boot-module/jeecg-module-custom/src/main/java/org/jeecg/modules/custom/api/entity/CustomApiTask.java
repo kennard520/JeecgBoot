@@ -78,6 +78,12 @@ public class CustomApiTask implements Serializable {
     @TableField("callback_secret")
     private String callbackSecret;
 
+    @TableField("callback_secret_ciphertext")
+    private String callbackSecretCiphertext;
+
+    @TableField("callback_secret_key_version")
+    private String callbackSecretKeyVersion;
+
     @TableField("response_mode")
     private String responseMode;
 

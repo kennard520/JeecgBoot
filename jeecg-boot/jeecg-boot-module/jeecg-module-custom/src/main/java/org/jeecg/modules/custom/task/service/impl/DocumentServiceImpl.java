@@ -300,14 +300,41 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         return document;
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Document updateParseHeartbeat(String taskId, String stage, Integer progress,
+                                         LocalDateTime heartbeatAt) {
+        if (oConvertUtils.isEmpty(taskId)) {
+            throw new JeecgBootException("parse task ID is required");
+        }
+        Document document = requireDocumentByTaskId(taskId);
+        LocalDateTime heartbeat = heartbeatAt == null ? LocalDateTime.now() : heartbeatAt;
+        document.setStatus(Document.STATUS_PARSING)
+                .setStage(stage)
+                .setProgress(progress)
+                .setLastHeartbeatAt(heartbeat);
+        lambdaUpdate()
+                .eq(Document::getId, document.getId())
+                .set(Document::getStatus, Document.STATUS_PARSING)
+                .set(Document::getStage, stage)
+                .set(Document::getProgress, progress)
+                .set(Document::getLastHeartbeatAt, heartbeat)
+                .set(Document::getErrorMessage, null)
+                .update();
+        return document;
+    }
+
     private void updateParseStarted(Document document) {
         lambdaUpdate()
                 .eq(Document::getId, document.getId())
                 .set(Document::getTaskId, document.getTaskId())
                 .set(Document::getStartedAt, document.getStartedAt())
+                .set(Document::getLastHeartbeatAt, document.getLastHeartbeatAt())
                 .set(Document::getFinishedAt, null)
                 .set(Document::getDecHeadId, null)
                 .set(Document::getStatus, Document.STATUS_PARSING)
+                .set(Document::getStage, document.getStage())
+                .set(Document::getProgress, document.getProgress())
                 .set(Document::getErrorMessage, null)
                 .update();
     }
@@ -318,6 +345,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
                 .set(Document::getDecHeadId, document.getDecHeadId())
                 .set(Document::getFinishedAt, document.getFinishedAt())
                 .set(Document::getStatus, Document.STATUS_COMPLETED)
+                .set(Document::getStage, document.getStage())
+                .set(Document::getProgress, document.getProgress())
                 .set(Document::getErrorMessage, null)
                 .update();
     }
@@ -327,6 +356,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
                 .eq(Document::getId, document.getId())
                 .set(Document::getFinishedAt, document.getFinishedAt())
                 .set(Document::getStatus, Document.STATUS_FAILED)
+                .set(Document::getStage, document.getStage())
                 .set(Document::getErrorMessage, document.getErrorMessage())
                 .update();
     }

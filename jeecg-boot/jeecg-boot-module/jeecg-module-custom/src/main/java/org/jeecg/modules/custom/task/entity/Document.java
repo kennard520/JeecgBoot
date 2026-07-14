@@ -133,6 +133,17 @@ public class Document implements Serializable {
     @Schema(description = "错误信息")
     private String errorMessage;
 
+    @TableField("stage")
+    private String stage;
+
+    @TableField("progress")
+    private Integer progress;
+
+    @TableField("last_heartbeat_at")
+    @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
+    @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    private LocalDateTime lastHeartbeatAt;
+
     public void markUploaded(String originalFilename, String storagePath, String storageType, Long fileSize, String contentType) {
         this.originalFilename = originalFilename;
         this.filename = resolveStoredFilename(storagePath);
@@ -148,8 +159,11 @@ public class Document implements Serializable {
     public void markParseStarted(String taskId) {
         this.taskId = taskId;
         this.startedAt = LocalDateTime.now();
+        this.lastHeartbeatAt = this.startedAt;
         this.finishedAt = null;
         this.status = STATUS_PARSING;
+        this.stage = "queued";
+        this.progress = 0;
         this.errorMessage = null;
     }
 
@@ -157,12 +171,15 @@ public class Document implements Serializable {
         this.decHeadId = decHeadId;
         this.finishedAt = LocalDateTime.now();
         this.status = STATUS_COMPLETED;
+        this.stage = "completed";
+        this.progress = 100;
         this.errorMessage = null;
     }
 
     public void markFailed(String errorMessage) {
         this.finishedAt = LocalDateTime.now();
         this.status = STATUS_FAILED;
+        this.stage = "failed";
         this.errorMessage = errorMessage;
     }
 

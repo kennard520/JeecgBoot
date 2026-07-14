@@ -39,6 +39,22 @@ public class DecHead implements Serializable {
     @Excel(name = "主键ID，达梦自增标识列", width = 15)
     @Schema(description = "主键ID，达梦自增标识列")
     private Long id;
+
+    @TableField("source_task_id")
+    @Schema(description = "Source parse task ID")
+    private String sourceTaskId;
+
+    @TableField("customer_code")
+    @Schema(description = "Owning customer code")
+    private String customerCode;
+
+    @TableField("source_type")
+    @Schema(description = "Declaration source type")
+    private String sourceType;
+
+    @TableField("uploader_user_id")
+    @Schema(description = "Uploader user ID")
+    private String uploaderUserId;
     /**
      * 申报单位代码；字段代码: AgentCode；数据类型: String；长度: 10；暂存必填: 是；申报必填: 是
      */

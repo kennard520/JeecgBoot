@@ -7,4 +7,7 @@ public interface CustomApiMqConstant {
     String PARSE_RESULT_EXCHANGE = "customs.parse.result.exchange";
     String PARSE_RESULT_QUEUE = "customs.parse.result.java";
     String PARSE_RESULT_ROUTING_KEY = "parse.result";
+    String PARSE_RESULT_DLX = "customs.parse.result.dlx";
+    String PARSE_RESULT_DLQ = "customs.parse.result.dlq";
+    String PARSE_RESULT_DLQ_ROUTING_KEY = "parse.result.dlq";
 }

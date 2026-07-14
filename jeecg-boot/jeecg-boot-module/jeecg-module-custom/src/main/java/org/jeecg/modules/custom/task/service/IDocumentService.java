@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import org.jeecg.modules.custom.task.entity.Document;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDateTime;
+
 /**
  * 文档解析任务 Service。
  */
@@ -28,4 +30,7 @@ public interface IDocumentService extends IService<Document> {
      * 解析失败时记录失败原因。
      */
     Document failParse(String taskId, String errorMessage);
+
+    Document updateParseHeartbeat(String taskId, String stage, Integer progress,
+                                  LocalDateTime heartbeatAt);
 }
