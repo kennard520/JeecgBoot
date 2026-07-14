@@ -10,4 +10,13 @@ public interface CustomApiMqConstant {
     String PARSE_RESULT_DLX = "customs.parse.result.dlx";
     String PARSE_RESULT_DLQ = "customs.parse.result.dlq";
     String PARSE_RESULT_DLQ_ROUTING_KEY = "parse.result.dlq";
+
+    String PARSE_RESULT_RETRY_EXCHANGE = "customs.parse.result.retry.exchange";
+    String PARSE_RESULT_RETRY_60_QUEUE = "customs.parse.result.retry.60s";
+    String PARSE_RESULT_RETRY_300_QUEUE = "customs.parse.result.retry.300s";
+    String PARSE_RESULT_RETRY_900_QUEUE = "customs.parse.result.retry.900s";
+    String PARSE_RESULT_RETRY_60_ROUTING_KEY = "parse.result.retry.60s";
+    String PARSE_RESULT_RETRY_300_ROUTING_KEY = "parse.result.retry.300s";
+    String PARSE_RESULT_RETRY_900_ROUTING_KEY = "parse.result.retry.900s";
+    String PARSE_RESULT_RETRY_HEADER = "x-custom-result-retry-attempt";
 }

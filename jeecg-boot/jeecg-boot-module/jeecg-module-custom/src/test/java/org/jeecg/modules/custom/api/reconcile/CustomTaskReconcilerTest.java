@@ -1,36 +1,48 @@
 package org.jeecg.modules.custom.api.reconcile;
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CustomTaskReconcilerTest {
+    private static final Instant NOW = Instant.parse("2026-07-14T05:00:00Z");
 
     @Test
-    void schedulerDelegatesEachCandidateToIndependentTicketService() {
+    void schedulerAsksSqlForOnlyExpiredCandidatesBeforeApplyingBatchLimit() {
         CustomApiTaskMapper taskMapper = mock(CustomApiTaskMapper.class);
         CustomTaskReconcileService ticketService = mock(CustomTaskReconcileService.class);
-        Page<CustomApiTask> page = new Page<>();
-        page.setRecords(List.of(
-                new CustomApiTask().setTaskId("task-1"),
-                new CustomApiTask().setTaskId("task-2")));
-        when(taskMapper.selectPage(any(Page.class), any())).thenReturn(page);
-        CustomTaskReconciler reconciler = new CustomTaskReconciler(taskMapper, ticketService, 100);
+        LocalDateTime now = LocalDateTime.ofInstant(NOW, ZoneOffset.UTC);
+        when(taskMapper.selectStaleCandidateTaskIds(
+                eq(now.minusSeconds(3600)),
+                eq(now.minusSeconds(300)),
+                eq(now.minusSeconds(600)),
+                eq(100)))
+                .thenReturn(List.of("task-101", "task-202"));
+        CustomTaskReconciler reconciler = new CustomTaskReconciler(
+                taskMapper, ticketService, 100, 300L, 600L, 3600L,
+                Clock.fixed(NOW, ZoneOffset.UTC));
 
         reconciler.reconcileStaleTasks();
 
-        verify(ticketService).reconcile("task-1");
-        verify(ticketService).reconcile("task-2");
+        verify(taskMapper).selectStaleCandidateTaskIds(
+                now.minusSeconds(3600),
+                now.minusSeconds(300),
+                now.minusSeconds(600),
+                100);
+        verify(ticketService).reconcile("task-101");
+        verify(ticketService).reconcile("task-202");
     }
 
     @Test
