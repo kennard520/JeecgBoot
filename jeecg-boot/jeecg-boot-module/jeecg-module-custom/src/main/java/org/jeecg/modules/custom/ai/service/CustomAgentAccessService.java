@@ -1,6 +1,7 @@
 package org.jeecg.modules.custom.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.jeecg.common.api.CommonAPI;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.common.system.vo.LoginUser;
 import org.jeecg.config.security.utils.SecureUtil;
@@ -18,6 +19,7 @@ import org.jeecg.modules.custom.ai.vo.AgentOptionResponse;
 import org.jeecg.modules.custom.ai.vo.ApiAppAgentGrantRequest;
 import org.jeecg.modules.custom.ai.vo.CurrentCustomer;
 import org.jeecg.modules.custom.ai.vo.UserAgentGrantRequest;
+import org.jeecg.modules.custom.ai.vo.UserAgentGrantListItem;
 import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,17 +41,20 @@ public class CustomAgentAccessService {
     private final CustomUserAgentMapper userAgentMapper;
     private final CustomAiAgentMapper agentMapper;
     private final CustomApiAppAgentMapper appAgentMapper;
+    private final CommonAPI commonAPI;
 
     public CustomAgentAccessService(CustomCustomerMapper customerMapper,
                                     CustomCustomerUserMapper customerUserMapper,
                                     CustomUserAgentMapper userAgentMapper,
                                     CustomAiAgentMapper agentMapper,
-                                    CustomApiAppAgentMapper appAgentMapper) {
+                                    CustomApiAppAgentMapper appAgentMapper,
+                                    CommonAPI commonAPI) {
         this.customerMapper = customerMapper;
         this.customerUserMapper = customerUserMapper;
         this.userAgentMapper = userAgentMapper;
         this.agentMapper = agentMapper;
         this.appAgentMapper = appAgentMapper;
+        this.commonAPI = commonAPI;
     }
 
     public CurrentCustomer requireCurrentCustomer() {
@@ -193,11 +198,14 @@ public class CustomAgentAccessService {
             throw new JeecgBootException("customerCode 和 userId 不能为空");
         }
         requireEnabledCustomer(request.getCustomerCode());
+        requireEnabledCustomerUser(request.getCustomerCode(), request.getUserId());
         List<String> codes = normalizeAgentCodes(request.getAgentCodes());
         String defaultCode = resolveDefault(codes, request.getDefaultAgentCode());
         requireEnabledAgents(codes);
         LocalDateTime now = LocalDateTime.now();
-        userAgentMapper.delete(new LambdaQueryWrapper<CustomUserAgent>().eq(CustomUserAgent::getUserId, request.getUserId()));
+        userAgentMapper.delete(new LambdaQueryWrapper<CustomUserAgent>()
+                .eq(CustomUserAgent::getCustomerCode, request.getCustomerCode().trim())
+                .eq(CustomUserAgent::getUserId, request.getUserId().trim()));
         List<CustomUserAgent> saved = new ArrayList<>();
         for (String code : codes) {
             CustomUserAgent grant = new CustomUserAgent()
@@ -212,6 +220,95 @@ public class CustomAgentAccessService {
             saved.add(grant);
         }
         return saved;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public CustomCustomerUser replaceCustomerUser(CustomCustomerUser relation) {
+        requireSuperAdmin();
+        if (relation == null || isBlank(relation.getCustomerCode()) || isBlank(relation.getUserId())) {
+            throw new JeecgBootException("customerCode 和 userId 不能为空");
+        }
+        String customerCode = relation.getCustomerCode().trim();
+        String userId = relation.getUserId().trim();
+        requireEnabledCustomer(customerCode);
+        customerUserMapper.delete(new LambdaQueryWrapper<CustomCustomerUser>()
+                .eq(CustomCustomerUser::getUserId, userId));
+        LocalDateTime now = LocalDateTime.now();
+        relation.setId(null)
+                .setCustomerCode(customerCode)
+                .setUserId(userId)
+                .setUsername(trimToNull(relation.getUsername()))
+                .setEnabled(1)
+                .setCreatedAt(now)
+                .setUpdatedAt(now);
+        customerUserMapper.insert(relation);
+        return relation;
+    }
+
+    public List<UserAgentGrantListItem> listUserGrants(String customerCode, String username, String agentCode) {
+        requireSuperAdmin();
+        String customerFilter = trimToNull(customerCode);
+        String usernameFilter = trimToNull(username);
+        String agentFilter = trimToNull(agentCode);
+        if (agentFilter != null) {
+            agentFilter = agentFilter.toUpperCase(Locale.ROOT);
+        }
+
+        List<CustomCustomerUser> relations = customerUserMapper.selectList(
+                new LambdaQueryWrapper<CustomCustomerUser>()
+                        .eq(CustomCustomerUser::getEnabled, 1)
+                        .eq(customerFilter != null, CustomCustomerUser::getCustomerCode, customerFilter)
+                        .like(usernameFilter != null, CustomCustomerUser::getUsername, usernameFilter)
+                        .orderByDesc(CustomCustomerUser::getUpdatedAt)
+        );
+        if (relations == null || relations.isEmpty()) {
+            return List.of();
+        }
+        Map<String, String> customerNames = safeList(customerMapper.selectList(null)).stream()
+                .collect(Collectors.toMap(CustomCustomer::getCustomerCode, CustomCustomer::getCustomerName,
+                        (left, right) -> left, LinkedHashMap::new));
+        Map<String, String> agentNames = safeList(agentMapper.selectList(null)).stream()
+                .collect(Collectors.toMap(CustomAiAgent::getAgentCode, CustomAiAgent::getAgentName,
+                        (left, right) -> left, LinkedHashMap::new));
+        Map<String, List<CustomUserAgent>> grantsByUser = safeList(userAgentMapper.selectList(
+                new LambdaQueryWrapper<CustomUserAgent>()
+                        .eq(CustomUserAgent::getEnabled, 1)
+                        .orderByAsc(CustomUserAgent::getCreatedAt, CustomUserAgent::getId)
+        )).stream().collect(Collectors.groupingBy(
+                grant -> grantKey(grant.getCustomerCode(), grant.getUserId()),
+                LinkedHashMap::new,
+                Collectors.toList()
+        ));
+
+        String finalAgentFilter = agentFilter;
+        return relations.stream()
+                .filter(relation -> customerFilter == null || customerFilter.equals(relation.getCustomerCode()))
+                .filter(relation -> usernameFilter == null || containsIgnoreCase(relation.getUsername(), usernameFilter))
+                .map(relation -> toGrantListItem(relation, customerNames, agentNames,
+                        grantsByUser.getOrDefault(grantKey(relation.getCustomerCode(), relation.getUserId()), List.of())))
+                .filter(item -> finalAgentFilter == null || item.getAgentCodes().contains(finalAgentFilter))
+                .toList();
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteUserAgents(String customerCode, String userId) {
+        requireSuperAdmin();
+        if (isBlank(customerCode) || isBlank(userId)) {
+            throw new JeecgBootException("customerCode 和 userId 不能为空");
+        }
+        userAgentMapper.delete(new LambdaQueryWrapper<CustomUserAgent>()
+                .eq(CustomUserAgent::getCustomerCode, customerCode.trim())
+                .eq(CustomUserAgent::getUserId, userId.trim()));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteApiAppAgents(Long appId) {
+        requireSuperAdmin();
+        if (appId == null) {
+            throw new JeecgBootException("appId 不能为空");
+        }
+        appAgentMapper.delete(new LambdaQueryWrapper<CustomApiAppAgent>()
+                .eq(CustomApiAppAgent::getAppId, appId));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -285,6 +382,70 @@ public class CustomAgentAccessService {
         if (customer == null) {
             throw new JeecgBootException("客户不存在或已停用");
         }
+    }
+
+    private void requireEnabledCustomerUser(String customerCode, String userId) {
+        CustomCustomerUser relation = customerUserMapper.selectOne(new LambdaQueryWrapper<CustomCustomerUser>()
+                .eq(CustomCustomerUser::getCustomerCode, customerCode.trim())
+                .eq(CustomCustomerUser::getUserId, userId.trim())
+                .eq(CustomCustomerUser::getEnabled, 1));
+        if (relation == null) {
+            throw new JeecgBootException("目标用户未绑定当前客户或关系已停用");
+        }
+    }
+
+    private UserAgentGrantListItem toGrantListItem(CustomCustomerUser relation,
+                                                    Map<String, String> customerNames,
+                                                    Map<String, String> agentNames,
+                                                    List<CustomUserAgent> grants) {
+        List<String> codes = grants.stream().map(CustomUserAgent::getAgentCode).toList();
+        List<String> names = codes.stream().map(code -> agentNames.getOrDefault(code, code)).toList();
+        CustomUserAgent defaultGrant = grants.stream()
+                .filter(grant -> Integer.valueOf(1).equals(grant.getIsDefault()))
+                .findFirst()
+                .orElse(null);
+        LoginUser displayUser = findDisplayUser(relation.getUsername());
+        LocalDateTime updatedAt = grants.stream()
+                .map(CustomUserAgent::getUpdatedAt)
+                .filter(value -> value != null)
+                .max(LocalDateTime::compareTo)
+                .orElse(relation.getUpdatedAt());
+        String defaultCode = defaultGrant == null ? null : defaultGrant.getAgentCode();
+        return new UserAgentGrantListItem()
+                .setId(relation.getId())
+                .setCustomerCode(relation.getCustomerCode())
+                .setCustomerName(customerNames.get(relation.getCustomerCode()))
+                .setUserId(relation.getUserId())
+                .setUsername(relation.getUsername())
+                .setRealname(displayUser == null ? null : displayUser.getRealname())
+                .setAgentCodes(codes)
+                .setAgentNames(names)
+                .setDefaultAgentCode(defaultCode)
+                .setDefaultAgentName(defaultCode == null ? null : agentNames.getOrDefault(defaultCode, defaultCode))
+                .setUpdatedAt(updatedAt);
+    }
+
+    private LoginUser findDisplayUser(String username) {
+        if (isBlank(username)) {
+            return null;
+        }
+        try {
+            return commonAPI.getUserByName(username);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String grantKey(String customerCode, String userId) {
+        return String.valueOf(customerCode) + "::" + String.valueOf(userId);
+    }
+
+    private boolean containsIgnoreCase(String value, String search) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(search.toLowerCase(Locale.ROOT));
+    }
+
+    private <T> List<T> safeList(List<T> values) {
+        return values == null ? List.of() : values;
     }
 
     private void requireEnabledAgents(List<String> codes) {

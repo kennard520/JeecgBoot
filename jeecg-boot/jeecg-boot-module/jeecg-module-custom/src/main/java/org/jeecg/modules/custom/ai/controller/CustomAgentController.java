@@ -19,6 +19,7 @@ import org.jeecg.modules.custom.ai.service.ICustomUserAgentService;
 import org.jeecg.modules.custom.ai.vo.AgentMineResponse;
 import org.jeecg.modules.custom.ai.vo.ApiAppAgentGrantRequest;
 import org.jeecg.modules.custom.ai.vo.UserAgentGrantRequest;
+import org.jeecg.modules.custom.ai.vo.UserAgentGrantListItem;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -65,7 +66,7 @@ public class CustomAgentController {
                 .setAgents(accessService.listCurrentUserAgents()));
     }
 
-    @GetMapping("/admin/customers")
+    @GetMapping({"/admin/customers", "/agents/customers"})
     public Result<List<CustomCustomer>> customers() {
         accessService.requireSuperAdmin();
         return Result.OK(customerService.list());
@@ -89,7 +90,21 @@ public class CustomAgentController {
         return Result.OK(customer);
     }
 
-    @GetMapping("/admin/agents")
+    @DeleteMapping("/admin/customers")
+    public Result<?> deleteCustomer(@RequestParam String customerCode) {
+        accessService.requireSuperAdmin();
+        if (blank(customerCode)) {
+            throw new JeecgBootException("customerCode 不能为空");
+        }
+        CustomCustomer customer = customerService.getById(customerCode.trim());
+        if (customer != null) {
+            customer.setEnabled(0).setUpdatedAt(LocalDateTime.now());
+            customerService.updateById(customer);
+        }
+        return Result.OK("删除成功");
+    }
+
+    @GetMapping({"/admin/agents", "/agents/list"})
     public Result<List<CustomAiAgent>> agents() {
         accessService.requireSuperAdmin();
         return Result.OK(agentService.list());
@@ -113,17 +128,23 @@ public class CustomAgentController {
         return Result.OK(agent);
     }
 
+    @DeleteMapping("/admin/agents")
+    public Result<?> deleteAgent(@RequestParam String agentCode) {
+        accessService.requireSuperAdmin();
+        if (blank(agentCode)) {
+            throw new JeecgBootException("agentCode 不能为空");
+        }
+        CustomAiAgent agent = agentService.getById(agentCode.trim());
+        if (agent != null) {
+            agent.setEnabled(0).setUpdatedAt(LocalDateTime.now());
+            agentService.updateById(agent);
+        }
+        return Result.OK("删除成功");
+    }
+
     @PutMapping("/admin/customer-users")
     public Result<CustomCustomerUser> saveCustomerUser(@RequestBody CustomCustomerUser relation) {
-        accessService.requireSuperAdmin();
-        if (relation == null || blank(relation.getCustomerCode()) || blank(relation.getUserId())) {
-            throw new JeecgBootException("customerCode 和 userId 不能为空");
-        }
-        customerUserService.remove(new LambdaQueryWrapper<CustomCustomerUser>().eq(CustomCustomerUser::getUserId, relation.getUserId()));
-        LocalDateTime now = LocalDateTime.now();
-        relation.setId(null).setEnabled(1).setCreatedAt(now).setUpdatedAt(now);
-        customerUserService.save(relation);
-        return Result.OK(relation);
+        return Result.OK(accessService.replaceCustomerUser(relation));
     }
 
     @DeleteMapping("/admin/customer-users")
@@ -134,26 +155,52 @@ public class CustomAgentController {
         return Result.OK("删除成功");
     }
 
+    @GetMapping({"/admin/user-grants", "/agents/grants/list"})
+    public Result<List<UserAgentGrantListItem>> listUserGrants(
+            @RequestParam(required = false) String customerCode,
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String agentCode) {
+        return Result.OK(accessService.listUserGrants(customerCode, username, agentCode));
+    }
+
     @GetMapping("/admin/user-grants/{userId}")
-    public Result<List<CustomUserAgent>> userGrants(@PathVariable String userId) {
+    public Result<List<CustomUserAgent>> userGrantsByUser(@PathVariable String userId) {
         accessService.requireSuperAdmin();
         return Result.OK(userAgentService.list(new LambdaQueryWrapper<CustomUserAgent>().eq(CustomUserAgent::getUserId, userId)));
     }
 
-    @PutMapping("/admin/user-grants")
+    @PutMapping({"/admin/user-grants", "/agents/grants/save"})
     public Result<List<CustomUserAgent>> saveUserGrants(@RequestBody UserAgentGrantRequest request) {
         return Result.OK(accessService.replaceUserAgents(request));
     }
 
-    @GetMapping("/admin/app-grants/{appId}")
-    public Result<List<CustomApiAppAgent>> appGrants(@PathVariable Long appId) {
+    @DeleteMapping({"/admin/user-grants", "/agents/grants/delete"})
+    public Result<?> deleteUserGrants(@RequestParam String userId,
+                                      @RequestParam String customerCode) {
+        accessService.deleteUserAgents(customerCode, userId);
+        return Result.OK("删除成功");
+    }
+
+    @GetMapping("/admin/app-grants")
+    public Result<List<CustomApiAppAgent>> listAppGrants(@RequestParam Long appId) {
         accessService.requireSuperAdmin();
         return Result.OK(appAgentService.list(new LambdaQueryWrapper<CustomApiAppAgent>().eq(CustomApiAppAgent::getAppId, appId)));
+    }
+
+    @GetMapping("/admin/app-grants/{appId}")
+    public Result<List<CustomApiAppAgent>> appGrantsById(@PathVariable Long appId) {
+        return listAppGrants(appId);
     }
 
     @PutMapping("/admin/app-grants")
     public Result<List<CustomApiAppAgent>> saveAppGrants(@RequestBody ApiAppAgentGrantRequest request) {
         return Result.OK(accessService.replaceApiAppAgents(request));
+    }
+
+    @DeleteMapping("/admin/app-grants")
+    public Result<?> deleteAppGrants(@RequestParam Long appId) {
+        accessService.deleteApiAppAgents(appId);
+        return Result.OK("删除成功");
     }
 
     private boolean blank(String value) {
