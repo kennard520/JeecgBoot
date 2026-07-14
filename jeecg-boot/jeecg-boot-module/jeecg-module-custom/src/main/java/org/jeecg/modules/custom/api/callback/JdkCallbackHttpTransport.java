@@ -1,5 +1,6 @@
 package org.jeecg.modules.custom.api.callback;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -29,6 +30,7 @@ public class JdkCallbackHttpTransport implements CallbackHttpTransport {
     private final OkHttpClient baseClient;
     private final Duration requestTimeout;
 
+    @Autowired
     public JdkCallbackHttpTransport(
             @Value("${custom.api.callback.connect-timeout-seconds:10}") long connectTimeoutSeconds,
             @Value("${custom.api.callback.request-timeout-seconds:30}") long requestTimeoutSeconds) {

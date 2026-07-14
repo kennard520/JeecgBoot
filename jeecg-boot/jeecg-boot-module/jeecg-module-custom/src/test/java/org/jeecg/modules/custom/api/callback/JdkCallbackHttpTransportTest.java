@@ -6,6 +6,7 @@ import okhttp3.Protocol;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.net.InetAddress;
 import java.net.URI;
@@ -19,6 +20,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class JdkCallbackHttpTransportTest {
+
+    @Test
+    void startsAsASpringComponentWithConfiguredTimeouts() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.register(JdkCallbackHttpTransport.class);
+            context.refresh();
+
+            assertThat(context.getBean(CallbackHttpTransport.class))
+                    .isInstanceOf(JdkCallbackHttpTransport.class);
+        }
+    }
 
     @Test
     void pinsValidatedAddressesWhileRequestKeepsOriginalHostname() throws Exception {
