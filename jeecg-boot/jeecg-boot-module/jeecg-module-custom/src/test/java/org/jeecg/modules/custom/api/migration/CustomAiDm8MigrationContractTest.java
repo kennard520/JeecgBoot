@@ -47,6 +47,18 @@ class CustomAiDm8MigrationContractTest {
         assertTrue(sql.contains("STATUS\" = 'FAILED'"));
     }
 
+    @Test
+    void nullableApiIdempotencyKeysUseConditionalUniqueIndexes() throws IOException {
+        String sql = readMigration();
+
+        assertTrue(sql.contains("CASE WHEN \"APP_ID\" IS NOT NULL AND \"CLIENT_FILE_ID\" IS NOT NULL THEN \"APP_ID\" END"));
+        assertTrue(sql.contains("CASE WHEN \"APP_ID\" IS NOT NULL AND \"IDEMPOTENCY_KEY\" IS NOT NULL THEN \"APP_ID\" END"));
+        assertTrue(sql.contains("CASE WHEN \"APP_ID\" IS NOT NULL AND \"FILE_ID\" IS NOT NULL THEN \"APP_ID\" END"));
+        assertTrue(sql.contains("CASE WHEN \"APP_ID\" IS NOT NULL AND \"CLIENT_TASK_ID\" IS NOT NULL THEN \"APP_ID\" END"));
+        assertFalse(sql.contains("ON \"CUSTOM_API_FILE\" (\"APP_ID\", \"CLIENT_FILE_ID\")"));
+        assertFalse(sql.contains("ON \"CUSTOM_API_TASK\" (\"APP_ID\", \"CLIENT_TASK_ID\")"));
+    }
+
     private static String readMigration() throws IOException {
         Path current = Paths.get("").toAbsolutePath();
         while (current != null) {
