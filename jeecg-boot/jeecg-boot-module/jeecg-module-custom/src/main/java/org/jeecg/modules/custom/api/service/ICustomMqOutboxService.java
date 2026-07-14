@@ -12,12 +12,14 @@ public interface ICustomMqOutboxService extends IService<CustomMqOutbox> {
 
     List<CustomMqOutbox> findPublishable(int limit);
 
-    boolean claim(Long id);
+    String claim(Long id, String claimedBy);
 
-    void markSent(Long id);
+    void markSent(Long id, String claimToken);
 
-    void reschedule(CustomMqOutbox event, String error, int maxAttempts,
+    void reschedule(CustomMqOutbox event, String claimToken, String error, int maxAttempts,
                     long baseDelaySeconds, long maxDelaySeconds);
 
     void releaseStaleClaims(long claimTimeoutSeconds);
+
+    CustomMqOutbox replayDead(String eventId);
 }

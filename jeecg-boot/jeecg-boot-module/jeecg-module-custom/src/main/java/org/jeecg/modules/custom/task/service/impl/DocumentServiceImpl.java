@@ -187,6 +187,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("source", "task-page");
         metadata.put("documentId", document.getId());
+        LocalDateTime now = LocalDateTime.now();
         return new CustomApiTask()
                 .setTaskId(taskId)
                 .setFileId(file.getFileId())
@@ -199,10 +200,11 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
                 .setStatus(CustomApiTask.STATUS_QUEUED)
                 .setStage("queued")
                 .setProgress(0)
+                .setQueuedAt(now)
                 .setCustomsAiRunNo(1)
                 .setVersion(0)
                 .setMetadataJson(JSON.toJSONString(metadata))
-                .setCreatedAt(LocalDateTime.now());
+                .setCreatedAt(now);
     }
 
     private void verifyWebFile(CustomApiFile file) {
@@ -319,6 +321,26 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
                 .set(Document::getStage, stage)
                 .set(Document::getProgress, progress)
                 .set(Document::getLastHeartbeatAt, heartbeat)
+                .set(Document::getErrorMessage, null)
+                .update();
+        return document;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Document markParseQueued(String taskId) {
+        Document document = requireDocumentByTaskId(taskId);
+        document.setStatus(Document.STATUS_PARSING)
+                .setStage("queued")
+                .setProgress(0)
+                .setFinishedAt(null)
+                .setErrorMessage(null);
+        lambdaUpdate()
+                .eq(Document::getId, document.getId())
+                .set(Document::getStatus, document.getStatus())
+                .set(Document::getStage, document.getStage())
+                .set(Document::getProgress, document.getProgress())
+                .set(Document::getFinishedAt, null)
                 .set(Document::getErrorMessage, null)
                 .update();
         return document;

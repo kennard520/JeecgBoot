@@ -14,6 +14,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -29,8 +30,9 @@ class CustomMqOutboxPublisherTest {
 
         fixture.publisher.publishPending();
 
-        verify(fixture.outbox).markSent(1L);
-        verify(fixture.outbox, never()).reschedule(any(), any(), anyInt(), anyLong(), anyLong());
+        verify(fixture.outbox).markSent(1L, "claim-1");
+        verify(fixture.outbox, never()).reschedule(
+                any(), anyString(), anyString(), anyInt(), anyLong(), anyLong());
     }
 
     @Test
@@ -41,8 +43,21 @@ class CustomMqOutboxPublisherTest {
 
         fixture.publisher.publishPending();
 
-        verify(fixture.outbox, never()).markSent(any());
-        verify(fixture.outbox).reschedule(eq(fixture.event), eq("broker nack"), eq(8), eq(2L), eq(300L));
+        verify(fixture.outbox, never()).markSent(any(), anyString());
+        verify(fixture.outbox).reschedule(
+                eq(fixture.event), eq("claim-1"), eq("broker nack"), eq(8), eq(2L), eq(300L));
+    }
+
+    @Test
+    void stalePublisherDoesNotRescheduleEventClaimedByAnotherInstance() {
+        Fixture fixture = fixture();
+        doThrow(new OutboxClaimLostException("claim lost"))
+                .when(fixture.outbox).markSent(1L, "claim-1");
+
+        fixture.publisher.publishPending();
+
+        verify(fixture.outbox, never()).reschedule(
+                any(), anyString(), anyString(), anyInt(), anyLong(), anyLong());
     }
 
     private Fixture fixture() {
@@ -55,11 +70,12 @@ class CustomMqOutboxPublisherTest {
         CustomApiTask task = new CustomApiTask().setId(2L).setTaskId("task-1").setFileId("file-1");
         CustomApiFile file = new CustomApiFile().setId(3L).setFileId("file-1").setStatus(CustomApiFile.STATUS_UPLOADED);
         when(outbox.findPublishable(20)).thenReturn(List.of(event));
-        when(outbox.claim(1L)).thenReturn(true);
+        when(outbox.claim(eq(1L), anyString())).thenReturn("claim-1");
         when(taskMapper.selectOne(any())).thenReturn(task);
         when(fileService.getOne(any(), eq(false))).thenReturn(file);
         CustomMqOutboxPublisher publisher = new CustomMqOutboxPublisher(
-                outbox, producer, taskMapper, fileService, 20, 8, 2L, 300L, 300L);
+                outbox, producer, taskMapper, fileService,
+                20, 8, 2L, 300L, 300L, "java-a");
         return new Fixture(outbox, producer, event, publisher);
     }
 

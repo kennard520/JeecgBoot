@@ -111,6 +111,9 @@ public class CustomApiTask implements Serializable {
     @TableField("last_heartbeat_at")
     private LocalDateTime lastHeartbeatAt;
 
+    @TableField("queued_at")
+    private LocalDateTime queuedAt;
+
     @Version
     @TableField("version")
     private Integer version;

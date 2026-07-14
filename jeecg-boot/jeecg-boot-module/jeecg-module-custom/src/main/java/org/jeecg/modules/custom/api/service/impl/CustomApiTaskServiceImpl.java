@@ -151,6 +151,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         }
 
         String taskId = CustomApiIds.taskId();
+        LocalDateTime now = LocalDateTime.now();
         Document document = new Document();
         document.markUploaded(file.getOriginalFilename(), storagePath(file), file.getStorageType(), file.getFileSize(), file.getContentType());
         document.markParseStarted(taskId);
@@ -175,10 +176,11 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 .setStatus(CustomApiTask.STATUS_QUEUED)
                 .setStage("queued")
                 .setProgress(0)
+                .setQueuedAt(now)
                 .setCustomsAiRunNo(1)
                 .setVersion(0)
                 .setMetadataJson(request.getMetadata() == null ? null : JSON.toJSONString(request.getMetadata()))
-                .setCreatedAt(LocalDateTime.now());
+                .setCreatedAt(now);
         save(task);
 
         outboxService.enqueueParseTask(task, file, 1);

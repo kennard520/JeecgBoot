@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 @Component
 @Slf4j
 public class CustomMqOutboxPublisher {
@@ -25,6 +27,7 @@ public class CustomMqOutboxPublisher {
     private final long baseDelaySeconds;
     private final long maxDelaySeconds;
     private final long claimTimeoutSeconds;
+    private final String publisherId;
 
     @Autowired
     public CustomMqOutboxPublisher(
@@ -36,7 +39,8 @@ public class CustomMqOutboxPublisher {
             @Value("${custom.api.outbox.max-attempts:8}") int maxAttempts,
             @Value("${custom.api.outbox.base-delay-seconds:2}") long baseDelaySeconds,
             @Value("${custom.api.outbox.max-delay-seconds:300}") long maxDelaySeconds,
-            @Value("${custom.api.outbox.claim-timeout-seconds:300}") long claimTimeoutSeconds) {
+            @Value("${custom.api.outbox.claim-timeout-seconds:300}") long claimTimeoutSeconds,
+            @Value("${custom.api.outbox.publisher-id:${HOSTNAME:java}}") String publisherId) {
         this.outboxService = outboxService;
         this.producer = producer;
         this.taskMapper = taskMapper;
@@ -46,17 +50,21 @@ public class CustomMqOutboxPublisher {
         this.baseDelaySeconds = baseDelaySeconds;
         this.maxDelaySeconds = maxDelaySeconds;
         this.claimTimeoutSeconds = claimTimeoutSeconds;
+        this.publisherId = (publisherId == null || publisherId.isBlank() ? "java" : publisherId)
+                + "-" + UUID.randomUUID();
     }
 
     @Scheduled(fixedDelayString = "${custom.api.outbox.publish-interval-ms:1000}")
     public void publishPending() {
         outboxService.releaseStaleClaims(claimTimeoutSeconds);
         for (CustomMqOutbox event : outboxService.findPublishable(batchSize)) {
-            if (!outboxService.claim(event.getId())) {
+            String claimToken = outboxService.claim(event.getId(), publisherId);
+            if (claimToken == null) {
                 continue;
             }
             try {
-                event.setStatus(CustomMqOutbox.STATUS_SENDING);
+                event.setStatus(CustomMqOutbox.STATUS_SENDING)
+                        .setClaimToken(claimToken).setClaimedBy(publisherId);
                 CustomApiTask task = taskMapper.selectOne(new LambdaQueryWrapper<CustomApiTask>()
                         .eq(CustomApiTask::getTaskId, event.getAggregateId()));
                 if (task == null) {
@@ -68,10 +76,17 @@ public class CustomMqOutboxPublisher {
                     throw new IllegalStateException("file not found: " + task.getFileId());
                 }
                 producer.publishConfirmed(task, file, event);
-                outboxService.markSent(event.getId());
+                outboxService.markSent(event.getId(), claimToken);
+            } catch (OutboxClaimLostException claimLost) {
+                log.info("Skip stale custom MQ outbox completion, eventId={}", event.getEventId());
             } catch (Exception e) {
                 log.warn("Publish custom MQ outbox failed, eventId={}", event.getEventId(), e);
-                outboxService.reschedule(event, message(e), maxAttempts, baseDelaySeconds, maxDelaySeconds);
+                try {
+                    outboxService.reschedule(event, claimToken, message(e),
+                            maxAttempts, baseDelaySeconds, maxDelaySeconds);
+                } catch (OutboxClaimLostException claimLost) {
+                    log.info("Skip stale custom MQ outbox reschedule, eventId={}", event.getEventId());
+                }
             }
         }
     }

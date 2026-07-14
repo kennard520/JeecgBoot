@@ -33,4 +33,6 @@ public interface IDocumentService extends IService<Document> {
 
     Document updateParseHeartbeat(String taskId, String stage, Integer progress,
                                   LocalDateTime heartbeatAt);
+
+    Document markParseQueued(String taskId);
 }

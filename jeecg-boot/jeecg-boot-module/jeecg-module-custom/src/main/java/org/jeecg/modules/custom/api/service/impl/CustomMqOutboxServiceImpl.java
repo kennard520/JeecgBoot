@@ -5,17 +5,24 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.entity.CustomMqOutbox;
+import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
 import org.jeecg.modules.custom.api.mapper.CustomMqOutboxMapper;
 import org.jeecg.modules.custom.api.mq.CustomApiMqConstant;
+import org.jeecg.modules.custom.api.mq.OutboxClaimLostException;
+import org.jeecg.modules.custom.api.security.InternalDownloadTokenService;
+import org.jeecg.modules.custom.api.service.ICustomCallbackDeliveryService;
 import org.jeecg.modules.custom.api.service.ICustomMqOutboxService;
+import org.jeecg.modules.custom.task.service.IDocumentService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -25,6 +32,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
+@Slf4j
 public class CustomMqOutboxServiceImpl
         extends ServiceImpl<CustomMqOutboxMapper, CustomMqOutbox>
         implements ICustomMqOutboxService {
@@ -33,21 +41,34 @@ public class CustomMqOutboxServiceImpl
     private static final int MAX_ERROR_LENGTH = 1000;
 
     private final CustomMqOutboxMapper outboxMapper;
-    private final String internalBaseUrl;
-    private final String internalToken;
+    private final InternalDownloadTokenService downloadTokenService;
+    private final CustomApiTaskMapper taskMapper;
+    private final IDocumentService documentService;
+    private final ICustomCallbackDeliveryService callbackDeliveryService;
     private final ObjectMapper objectMapper = JsonMapper.builder().build();
+
+    public CustomMqOutboxServiceImpl(
+            CustomMqOutboxMapper outboxMapper,
+            InternalDownloadTokenService downloadTokenService) {
+        this(outboxMapper, downloadTokenService, null, null, null);
+    }
 
     @Autowired
     public CustomMqOutboxServiceImpl(
             CustomMqOutboxMapper outboxMapper,
-            @Value("${custom.api.internal-base-url:http://localhost:8080}") String internalBaseUrl,
-            @Value("${custom.api.internal-token:}") String internalToken) {
+            InternalDownloadTokenService downloadTokenService,
+            CustomApiTaskMapper taskMapper,
+            IDocumentService documentService,
+            ICustomCallbackDeliveryService callbackDeliveryService) {
         this.outboxMapper = outboxMapper;
-        this.internalBaseUrl = trimTrailingSlash(internalBaseUrl);
-        this.internalToken = internalToken == null ? "" : internalToken;
+        this.downloadTokenService = downloadTokenService;
+        this.taskMapper = taskMapper;
+        this.documentService = documentService;
+        this.callbackDeliveryService = callbackDeliveryService;
     }
 
     @Override
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public CustomMqOutbox enqueueParseTask(CustomApiTask task, CustomApiFile file, int runNo) {
         validateRequest(task, file, runNo);
         CustomMqOutbox existing = findAggregate(task.getTaskId(), runNo);
@@ -96,19 +117,26 @@ public class CustomMqOutboxServiceImpl
     }
 
     @Override
-    public boolean claim(Long id) {
-        return id != null && outboxMapper.claim(id, LocalDateTime.now()) == 1;
+    public String claim(Long id, String claimedBy) {
+        if (id == null || claimedBy == null || claimedBy.isBlank()) {
+            return null;
+        }
+        String claimToken = UUID.randomUUID().toString();
+        return outboxMapper.claim(id, claimToken, claimedBy, LocalDateTime.now()) == 1
+                ? claimToken : null;
     }
 
     @Override
-    public void markSent(Long id) {
-        if (id == null || outboxMapper.markSent(id, LocalDateTime.now()) != 1) {
-            throw new JeecgBootException("outbox event is not in sending state");
+    public void markSent(Long id, String claimToken) {
+        if (id == null || claimToken == null
+                || outboxMapper.markSent(id, claimToken, LocalDateTime.now()) != 1) {
+            throw new OutboxClaimLostException("outbox publisher claim was lost before confirm");
         }
     }
 
     @Override
-    public void reschedule(CustomMqOutbox event, String error, int maxAttempts,
+    @Transactional(rollbackFor = Exception.class)
+    public void reschedule(CustomMqOutbox event, String claimToken, String error, int maxAttempts,
                            long baseDelaySeconds, long maxDelaySeconds) {
         if (event == null || event.getId() == null) {
             return;
@@ -121,16 +149,123 @@ public class CustomMqOutboxServiceImpl
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime next = exhausted ? null : now.plusSeconds(delay);
         String status = exhausted ? CustomMqOutbox.STATUS_DEAD : CustomMqOutbox.STATUS_PENDING;
-        outboxMapper.reschedule(event.getId(), status, attempts, next,
-                truncate(error, MAX_ERROR_LENGTH), now);
+        String lastError = truncate(error, MAX_ERROR_LENGTH);
+        int updated = outboxMapper.reschedule(event.getId(), claimToken, status, attempts, next,
+                lastError, now);
+        if (updated != 1) {
+            throw new OutboxClaimLostException("outbox publisher claim was lost before reschedule");
+        }
         event.setStatus(status).setAttemptCount(attempts).setNextAttemptAt(next)
-                .setClaimedAt(null).setLastError(truncate(error, MAX_ERROR_LENGTH)).setUpdatedAt(now);
+                .setClaimedAt(null).setClaimToken(null).setClaimedBy(null)
+                .setLastError(lastError).setUpdatedAt(now);
+        if (exhausted) {
+            failAggregate(event, lastError, now);
+        }
     }
 
     @Override
     public void releaseStaleClaims(long claimTimeoutSeconds) {
         LocalDateTime now = LocalDateTime.now();
         outboxMapper.releaseStaleClaims(now.minusSeconds(Math.max(1L, claimTimeoutSeconds)), now);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CustomMqOutbox replayDead(String eventId) {
+        if (eventId == null || eventId.isBlank()) {
+            throw new JeecgBootException("eventId is required");
+        }
+        CustomMqOutbox event = outboxMapper.selectOne(new LambdaQueryWrapper<CustomMqOutbox>()
+                .eq(CustomMqOutbox::getEventId, eventId));
+        if (event == null || !CustomMqOutbox.STATUS_DEAD.equals(event.getStatus())) {
+            throw new JeecgBootException("only a dead outbox event can be replayed");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (outboxMapper.replayDead(event.getId(), now) != 1) {
+            throw new JeecgBootException("outbox event changed before replay");
+        }
+        CustomApiTask task = requireTaskMapper().selectByTaskIdForUpdate(event.getAggregateId());
+        if (task == null || !CustomApiTask.STATUS_FAILED.equals(task.getStatus())
+                || !"OUTBOX_DEAD".equals(task.getErrorCode())) {
+            throw new JeecgBootException("task is not replayable after outbox failure");
+        }
+        task.setStatus(CustomApiTask.STATUS_QUEUED)
+                .setStage("replay_queued")
+                .setProgress(0)
+                .setQueuedAt(now)
+                .setFinishedAt(null)
+                .setErrorCode(null)
+                .setErrorMessage(null);
+        requireTaskMapper().updateById(task);
+        requireDocumentService().markParseQueued(task.getTaskId());
+        event.setStatus(CustomMqOutbox.STATUS_PENDING)
+                .setAttemptCount(0)
+                .setNextAttemptAt(now)
+                .setClaimedAt(null)
+                .setClaimToken(null)
+                .setClaimedBy(null)
+                .setSentAt(null)
+                .setLastError(null)
+                .setUpdatedAt(now);
+        return event;
+    }
+
+    private void failAggregate(CustomMqOutbox event, String error, LocalDateTime now) {
+        CustomApiTask task = requireTaskMapper().selectByTaskIdForUpdate(event.getAggregateId());
+        if (task == null) {
+            throw new JeecgBootException("outbox task not found: " + event.getAggregateId());
+        }
+        if (isTerminal(task.getStatus())) {
+            return;
+        }
+        task.setStatus(CustomApiTask.STATUS_FAILED)
+                .setStage("enqueue_failed")
+                .setProgress(100)
+                .setErrorCode("OUTBOX_DEAD")
+                .setErrorMessage(error)
+                .setFinishedAt(now);
+        if (shouldCallback(task)) {
+            task.setCallbackStatus("pending").setCallbackError(null);
+        }
+        requireTaskMapper().updateById(task);
+        requireDocumentService().failParse(task.getTaskId(), error);
+        if (shouldCallback(task)) {
+            requireCallbackService().enqueueTerminal(
+                    task, "task.failed", null, "OUTBOX_DEAD", error);
+        }
+        log.error("CUSTOM_MQ_OUTBOX_DEAD eventId={}, taskId={}, attempts={}, error={}",
+                event.getEventId(), task.getTaskId(), event.getAttemptCount(), error);
+    }
+
+    private boolean isTerminal(String status) {
+        return List.of(CustomApiTask.STATUS_SUCCEEDED, CustomApiTask.STATUS_FAILED,
+                CustomApiTask.STATUS_CANCELLED, CustomApiTask.STATUS_TIMEOUT).contains(status);
+    }
+
+    private boolean shouldCallback(CustomApiTask task) {
+        return task.getCallbackUrl() != null && !task.getCallbackUrl().isBlank()
+                && !"polling".equals(task.getResponseMode());
+    }
+
+    private CustomApiTaskMapper requireTaskMapper() {
+        if (taskMapper == null) {
+            throw new IllegalStateException("task mapper is required for outbox state transition");
+        }
+        return taskMapper;
+    }
+
+    private IDocumentService requireDocumentService() {
+        if (documentService == null) {
+            throw new IllegalStateException("document service is required for outbox state transition");
+        }
+        return documentService;
+    }
+
+    private ICustomCallbackDeliveryService requireCallbackService() {
+        if (callbackDeliveryService == null) {
+            throw new IllegalStateException("callback service is required for outbox state transition");
+        }
+        return callbackDeliveryService;
     }
 
     private CustomMqOutbox findAggregate(String taskId, int runNo) {
@@ -160,11 +295,8 @@ public class CustomMqOutboxServiceImpl
         body.put("contentType", file.getContentType());
         body.put("fileSize", file.getActualFileSize());
         body.put("sha256", file.getActualSha256().trim().toLowerCase(Locale.ROOT));
-        body.put("downloadUrl", internalBaseUrl + "/custom/api/internal/tasks/"
-                + task.getTaskId() + "/files/" + file.getFileId() + "/download");
-        if (!internalToken.isBlank()) {
-            body.put("downloadHeaders", Map.of("X-Custom-Api-Internal-Token", internalToken));
-        }
+        body.put("downloadUrl", downloadTokenService.issue(
+                task.getTaskId(), file.getFileId(), runNo).url());
         if (task.getMetadataJson() != null && !task.getMetadataJson().isBlank()) {
             try {
                 body.put("metadata", objectMapper.readTree(task.getMetadataJson()));
@@ -216,11 +348,4 @@ public class CustomMqOutboxServiceImpl
         return value.substring(0, maxLength);
     }
 
-    private static String trimTrailingSlash(String value) {
-        String result = value == null || value.isBlank() ? "http://localhost:8080" : value.trim();
-        while (result.endsWith("/")) {
-            result = result.substring(0, result.length() - 1);
-        }
-        return result;
-    }
 }

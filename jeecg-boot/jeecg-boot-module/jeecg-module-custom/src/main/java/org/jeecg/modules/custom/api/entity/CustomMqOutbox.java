@@ -62,6 +62,12 @@ public class CustomMqOutbox implements Serializable {
     @TableField("claimed_at")
     private LocalDateTime claimedAt;
 
+    @TableField("claim_token")
+    private String claimToken;
+
+    @TableField("claimed_by")
+    private String claimedBy;
+
     @TableField("sent_at")
     private LocalDateTime sentAt;
 
