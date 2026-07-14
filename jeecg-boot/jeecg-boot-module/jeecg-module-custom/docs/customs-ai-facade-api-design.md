@@ -453,14 +453,14 @@ POST /custom/api/files/{fileId}/content
 X-Custom-Upload-Token: <short-lived upload capability>
 ```
 
-This endpoint is returned as `uploadUrl` when `jeecg.uploadType=local`. It is also used when Tencent COS is selected but its secret ID, secret key, region, or bucket is missing, so an incomplete cloud configuration cannot produce an unusable presigned URL. A fully configured cloud/object storage mode returns a presigned `PUT` URL.
+This endpoint is returned as `uploadUrl` when `jeecg.uploadType=local`. Its absolute URL is built from `custom.api.internal-base-url` so reverse proxies may expose a different public prefix from Spring's context path. It is also used when Tencent COS is selected but its secret ID, secret key, region, or bucket is missing, so an incomplete cloud configuration cannot produce an unusable presigned URL. A fully configured cloud/object storage mode returns a presigned `PUT` URL.
 
 Runtime configuration:
 
 ```text
 custom.api.token-ttl-seconds=7200
 custom.api.upload-url-ttl-seconds=900
-custom.api.internal-base-url=http://<jeecg-host>/jeecg-boot
+custom.api.internal-base-url=https://<public-jeecg-host>/<public-prefix>
 custom.api.internal-token=<token for customs-ai file download>
 ```
 

@@ -87,7 +87,8 @@ public class DefaultObjectStorageService implements ObjectStorageService {
         }
         file.setStorageType(CommonConstant.UPLOAD_TYPE_LOCAL);
         file.setBucket(null);
-        String uploadUrl = CommonUtils.getBaseUrl(request) + "/custom/api/files/" + file.getFileId() + "/content";
+        String facadeBaseUrl = hasText(internalBaseUrl) ? internalBaseUrl : CommonUtils.getBaseUrl(request);
+        String uploadUrl = trimRightSlash(facadeBaseUrl) + "/custom/api/files/" + file.getFileId() + "/content";
         FileUploadUrlResponse response = response(file, "POST", uploadUrl, expiresAt);
         response.getHeaders().put("X-Custom-Upload-Token", uploadToken);
         return response;

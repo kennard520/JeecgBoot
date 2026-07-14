@@ -68,6 +68,28 @@ class DefaultObjectStorageServiceTest {
     }
 
     @Test
+    void localUploadUsesConfiguredFacadeBaseUrlBehindARewritingProxy() {
+        DefaultObjectStorageService storage = new DefaultObjectStorageService();
+        ReflectionTestUtils.setField(storage, "uploadType", CommonConstant.UPLOAD_TYPE_LOCAL);
+        ReflectionTestUtils.setField(storage, "internalBaseUrl", "https://smart-entry.citclub.org/jeecgboot/");
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getScheme()).thenReturn("https");
+        when(request.getServerName()).thenReturn("smart-entry.citclub.org");
+        when(request.getServerPort()).thenReturn(443);
+        when(request.getContextPath()).thenReturn("/jeecg-boot");
+        CustomApiFile file = new CustomApiFile()
+                .setFileId("file-1")
+                .setContentType("application/zip")
+                .setExpiresAt(LocalDateTime.now().plusMinutes(5))
+                .setObjectKey("custom-api/uploads/file-1/case.zip");
+
+        var response = storage.createUploadUrl(file, "secret-capability", request);
+
+        assertThat(response.getUploadUrl()).isEqualTo(
+                "https://smart-entry.citclub.org/jeecgboot/custom/api/files/file-1/content");
+    }
+
+    @Test
     void localFreezeCopiesStagingContentToNewImmutableObject() throws Exception {
         DefaultObjectStorageService storage = new DefaultObjectStorageService();
         ReflectionTestUtils.setField(storage, "uploadPath", tempDir.toString());
