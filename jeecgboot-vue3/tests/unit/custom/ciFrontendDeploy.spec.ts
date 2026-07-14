@@ -27,6 +27,14 @@ describe('frontend deployment workflow', () => {
     expect(workflow).toContain('systemctl reload nginx');
   });
 
+  it('waits for backend readiness over HTTP within the remote deployment window', () => {
+    expect(workflow).toContain('command_timeout: 30m');
+    expect(workflow).toContain('http://127.0.0.1:8080/jeecg-boot/sys/getEncryptedString');
+    expect(workflow).not.toContain(
+      'docker logs --tail 200 $NAME 2>&1 | grep -q "Application Jeecg-Boot is running"'
+    );
+  });
+
   it('checks the served index with strict TLS before success and rolls back on failure', () => {
     const healthCheck = 'curl -fSs --resolve smart-entry.citclub.org:443:127.0.0.1';
     expect(workflow).toContain(healthCheck);
