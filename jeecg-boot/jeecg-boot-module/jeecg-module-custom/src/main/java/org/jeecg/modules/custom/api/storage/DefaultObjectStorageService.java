@@ -75,7 +75,7 @@ public class DefaultObjectStorageService implements ObjectStorageService {
     @Override
     public FileUploadUrlResponse createUploadUrl(CustomApiFile file, String uploadToken, HttpServletRequest request) {
         LocalDateTime expiresAt = file.getExpiresAt();
-        if (isTencentCos()) {
+        if (isTencentCos() && hasTencentCosConfiguration()) {
             file.setStorageType(uploadType);
             file.setBucket(cosBucketName);
             return response(file, "PUT", createCosPutUrl(file, expiresAt), expiresAt);
@@ -472,6 +472,15 @@ public class DefaultObjectStorageService implements ObjectStorageService {
 
     private boolean isTencentCos(String value) {
         return CommonConstant.UPLOAD_TYPE_TENCENT_COS.equals(value) || CommonConstant.UPLOAD_TYPE_COS.equals(value);
+    }
+
+    private boolean hasTencentCosConfiguration() {
+        return hasText(cosSecretId) && hasText(cosSecretKey)
+                && hasText(cosRegion) && hasText(cosBucketName);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private String trimRightSlash(String value) {

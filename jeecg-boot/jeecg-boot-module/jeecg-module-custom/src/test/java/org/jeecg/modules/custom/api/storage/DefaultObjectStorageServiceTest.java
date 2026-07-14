@@ -10,6 +10,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,11 +34,36 @@ class DefaultObjectStorageServiceTest {
         CustomApiFile file = new CustomApiFile()
                 .setFileId("file-1")
                 .setContentType("application/zip")
+                .setExpiresAt(LocalDateTime.now().plusMinutes(5))
                 .setObjectKey("custom-api/uploads/file-1/case.zip");
 
         var response = storage.createUploadUrl(file, "secret-capability", request);
 
         assertThat(response.getUploadUrl()).doesNotContain("secret-capability").doesNotContain("uploadToken=");
+        assertThat(response.getHeaders()).containsEntry("X-Custom-Upload-Token", "secret-capability");
+    }
+
+    @Test
+    void externalApiDefaultsToLocalWhenGlobalCosHasNoCredentials() {
+        DefaultObjectStorageService storage = new DefaultObjectStorageService();
+        ReflectionTestUtils.setField(storage, "uploadType", CommonConstant.UPLOAD_TYPE_TENCENT_COS);
+        ReflectionTestUtils.setField(storage, "cosSecretId", "");
+        ReflectionTestUtils.setField(storage, "cosSecretKey", "");
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getScheme()).thenReturn("https");
+        when(request.getServerName()).thenReturn("smart-entry.citclub.org");
+        when(request.getServerPort()).thenReturn(443);
+        when(request.getContextPath()).thenReturn("");
+        CustomApiFile file = new CustomApiFile()
+                .setFileId("file-1")
+                .setContentType("application/zip")
+                .setExpiresAt(LocalDateTime.now().plusMinutes(5))
+                .setObjectKey("custom-api/uploads/file-1/case.zip");
+
+        var response = storage.createUploadUrl(file, "secret-capability", request);
+
+        assertThat(response.getStorageType()).isEqualTo(CommonConstant.UPLOAD_TYPE_LOCAL);
+        assertThat(response.getUploadMethod()).isEqualTo("POST");
         assertThat(response.getHeaders()).containsEntry("X-Custom-Upload-Token", "secret-capability");
     }
 

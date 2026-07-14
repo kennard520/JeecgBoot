@@ -449,10 +449,11 @@ Implemented in this module:
 Development/local upload fallback:
 
 ```text
-POST /custom/api/files/{fileId}/content?uploadToken=...
+POST /custom/api/files/{fileId}/content
+X-Custom-Upload-Token: <short-lived upload capability>
 ```
 
-This endpoint is returned as `uploadUrl` only when `jeecg.uploadType=local`. Cloud/object storage modes return a presigned `PUT` URL.
+This endpoint is returned as `uploadUrl` when `jeecg.uploadType=local`. It is also used when Tencent COS is selected but its secret ID, secret key, region, or bucket is missing, so an incomplete cloud configuration cannot produce an unusable presigned URL. A fully configured cloud/object storage mode returns a presigned `PUT` URL.
 
 Runtime configuration:
 
