@@ -1,12 +1,9 @@
 package org.jeecg.modules.custom.api.mq;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
-import org.jeecg.modules.custom.api.storage.ObjectStorageService;
-import org.jeecg.modules.custom.api.vo.FileDownloadInfo;
+import org.jeecg.modules.custom.api.entity.CustomMqOutbox;
 import org.springframework.amqp.core.AmqpAdmin;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
@@ -16,60 +13,81 @@ import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class CustomApiTaskMqProducer {
-    private final ObjectMapper mapper = JsonMapper.builder().build();
+    private final RabbitTemplate rabbitTemplate;
+    private final AmqpAdmin amqpAdmin;
+    private final long confirmTimeoutMillis;
 
     @Autowired
-    private RabbitTemplate rabbitTemplate;
+    public CustomApiTaskMqProducer(
+            RabbitTemplate rabbitTemplate,
+            AmqpAdmin amqpAdmin,
+            @Value("${custom.api.outbox.confirm-timeout-ms:10000}") long confirmTimeoutMillis) {
+        this.rabbitTemplate = rabbitTemplate;
+        this.amqpAdmin = amqpAdmin;
+        this.confirmTimeoutMillis = Math.max(1L, confirmTimeoutMillis);
+    }
 
-    @Autowired
-    private AmqpAdmin amqpAdmin;
-
-    @Autowired
-    private ObjectStorageService objectStorageService;
-
-    public void sendParseTask(CustomApiTask task, CustomApiFile file) {
-        String routingKey = task.getCompanyCode();
-        if (routingKey == null || routingKey.isBlank()) {
-            throw new JeecgBootException("companyCode is required for MQ routing");
-        }
+    public void publishConfirmed(CustomApiTask task, CustomApiFile file, CustomMqOutbox event) {
+        validate(task, file, event);
+        String routingKey = event.getRoutingKey();
         try {
             ensureRequestQueue(routingKey);
-            FileDownloadInfo download = objectStorageService.createDownloadUrl(file, LocalDateTime.now().plusHours(2));
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("taskId", task.getTaskId());
-            body.put("fileId", task.getFileId());
-            body.put("customerCode", task.getCustomerCode());
-            body.put("clientTaskId", task.getClientTaskId());
-            body.put("companyCode", task.getCompanyCode());
-            body.put("direction", task.getDirection());
-            body.put("originalFilename", file.getOriginalFilename());
-            body.put("contentType", file.getContentType());
-            body.put("fileSize", file.getFileSize());
-            body.put("downloadUrl", download.getUrl());
-            body.put("downloadHeaders", download.getHeaders());
-            body.put("attemptNo", 1);
-            body.put("maxAttempts", 3);
-            body.put("metadata", task.getMetadataJson());
-
-            Message message = MessageBuilder.withBody(mapper.writeValueAsBytes(body))
+            Message message = MessageBuilder
+                    .withBody(event.getPayloadJson().getBytes(StandardCharsets.UTF_8))
                     .setContentType(MessageProperties.CONTENT_TYPE_JSON)
+                    .setMessageId(event.getEventId())
                     .setDeliveryMode(MessageDeliveryMode.PERSISTENT)
                     .build();
-            rabbitTemplate.send(CustomApiMqConstant.PARSE_REQUEST_EXCHANGE, routingKey, message);
+            CorrelationData correlation = new CorrelationData(event.getEventId());
+            rabbitTemplate.send(event.getExchangeName(), routingKey, message, correlation);
+            CorrelationData.Confirm confirm = correlation.getFuture()
+                    .get(confirmTimeoutMillis, TimeUnit.MILLISECONDS);
+            if (!confirm.isAck()) {
+                throw new JeecgBootException("RabbitMQ publisher confirm failed: " + confirm.getReason());
+            }
+            if (correlation.getReturned() != null) {
+                throw new JeecgBootException("RabbitMQ returned unroutable message: "
+                        + correlation.getReturned().getReplyText());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new JeecgBootException("RabbitMQ publisher confirm interrupted");
         } catch (JeecgBootException e) {
             throw e;
         } catch (Exception e) {
-            throw new JeecgBootException("send parse task MQ failed: " + e.getMessage());
+            throw new JeecgBootException("RabbitMQ publisher confirm failed: " + e.getMessage());
+        }
+    }
+
+    private void validate(CustomApiTask task, CustomApiFile file, CustomMqOutbox event) {
+        if (task == null || file == null || event == null) {
+            throw new JeecgBootException("task, file and outbox event are required");
+        }
+        if (event.getEventId() == null || event.getEventId().isBlank()
+                || event.getPayloadJson() == null || event.getPayloadJson().isBlank()) {
+            throw new JeecgBootException("outbox event id and payload are required");
+        }
+        if (event.getExchangeName() == null || event.getExchangeName().isBlank()
+                || event.getRoutingKey() == null || event.getRoutingKey().isBlank()) {
+            throw new JeecgBootException("outbox exchange and routing key are required");
+        }
+        if (!event.getRoutingKey().equals(task.getCompanyCode())) {
+            throw new JeecgBootException("outbox routing key does not match task agent");
+        }
+        if (!file.getFileId().equals(task.getFileId())
+                || !CustomApiFile.STATUS_UPLOADED.equals(file.getStatus())) {
+            throw new JeecgBootException("outbox file does not match an uploaded task file");
         }
     }
 

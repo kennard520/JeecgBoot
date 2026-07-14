@@ -20,8 +20,8 @@ import org.jeecg.modules.custom.api.entity.CustomApiApp;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
-import org.jeecg.modules.custom.api.mq.CustomApiTaskMqProducer;
 import org.jeecg.modules.custom.api.service.ICustomApiFileService;
+import org.jeecg.modules.custom.api.service.ICustomMqOutboxService;
 import org.jeecg.modules.custom.api.service.ICustomApiTaskService;
 import org.jeecg.modules.custom.api.service.CustomApiIdempotencyService;
 import org.jeecg.modules.custom.api.util.CanonicalRequestHasher;
@@ -80,7 +80,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
     @Autowired
     private ICustomApiFileService fileService;
     @Autowired
-    private CustomApiTaskMqProducer taskMqProducer;
+    private ICustomMqOutboxService outboxService;
     @Autowired
     private IDocumentService documentService;
     @Autowired
@@ -166,12 +166,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 .setCreatedAt(LocalDateTime.now());
         save(task);
 
-        try {
-            taskMqProducer.sendParseTask(task, file);
-        } catch (Exception e) {
-            markEnqueueFailed(task, e);
-            throw new JeecgBootException("failed to enqueue parse task: " + e.getMessage());
-        }
+        outboxService.enqueueParseTask(task, file, 1);
         return toResponse(task);
     }
 
@@ -230,21 +225,6 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
         throw new JeecgBootException("unsupported parse result status: " + status);
     }
 
-    private void markEnqueueFailed(CustomApiTask task, Exception e) {
-        task.setStatus(CustomApiTask.STATUS_FAILED);
-        task.setStage("enqueue_failed");
-        task.setErrorCode(e.getClass().getSimpleName());
-        task.setErrorMessage(e.getMessage());
-        task.setFinishedAt(LocalDateTime.now());
-        updateById(task);
-        if (task.getTaskId() != null) {
-            try {
-                documentService.failParse(task.getTaskId(), e.getMessage());
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
     private void completeTask(CustomApiTask task, Object result) {
         try {
             Long decHeadId = importDeclaration(result);
@@ -296,11 +276,13 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
     }
 
     private void updateRunning(CustomApiTask task, String stage, Integer progress) {
+        LocalDateTime heartbeat = LocalDateTime.now();
         task.setStatus(CustomApiTask.STATUS_RUNNING);
         task.setStage(stage);
         task.setProgress(progress);
+        task.setLastHeartbeatAt(heartbeat);
         if (task.getStartedAt() == null) {
-            task.setStartedAt(LocalDateTime.now());
+            task.setStartedAt(heartbeat);
         }
         lambdaUpdate()
                 .eq(CustomApiTask::getId, task.getId())
@@ -308,6 +290,7 @@ public class CustomApiTaskServiceImpl extends ServiceImpl<CustomApiTaskMapper, C
                 .set(CustomApiTask::getStage, task.getStage())
                 .set(CustomApiTask::getProgress, task.getProgress())
                 .set(CustomApiTask::getStartedAt, task.getStartedAt())
+                .set(CustomApiTask::getLastHeartbeatAt, heartbeat)
                 .set(CustomApiTask::getFinishedAt, null)
                 .set(CustomApiTask::getErrorCode, null)
                 .set(CustomApiTask::getErrorMessage, null)

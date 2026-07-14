@@ -10,8 +10,9 @@ import org.jeecg.common.util.oConvertUtils;
 import org.jeecg.modules.custom.api.entity.CustomApiFile;
 import org.jeecg.modules.custom.api.entity.CustomApiTask;
 import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
-import org.jeecg.modules.custom.api.mq.CustomApiTaskMqProducer;
 import org.jeecg.modules.custom.api.service.ICustomApiFileService;
+import org.jeecg.modules.custom.api.service.ICustomMqOutboxService;
+import org.jeecg.modules.custom.api.storage.ObjectStorageService;
 import org.jeecg.modules.custom.api.util.CustomApiCrypto;
 import org.jeecg.modules.custom.api.util.CustomApiIds;
 import org.jeecg.modules.custom.task.entity.Document;
@@ -24,10 +25,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.net.URI;
+import java.io.InputStream;
+import java.security.MessageDigest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
 
@@ -64,7 +68,10 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
     private CustomApiTaskMapper customApiTaskMapper;
 
     @Autowired
-    private CustomApiTaskMqProducer customApiTaskMqProducer;
+    private ICustomMqOutboxService customMqOutboxService;
+
+    @Autowired
+    private ObjectStorageService objectStorageService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -86,6 +93,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Document startParse(Long documentId) {
         Document document = requireDocument(documentId);
         if (Document.STATUS_PARSING.equals(document.getStatus())) {
@@ -104,19 +112,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         updateParseStarted(document);
         customApiTaskMapper.insert(task);
 
-        try {
-            customApiTaskMqProducer.sendParseTask(task, file);
-        } catch (Exception e) {
-            task.setStatus(CustomApiTask.STATUS_FAILED);
-            task.setStage("enqueue_failed");
-            task.setErrorCode(truncate(e.getClass().getSimpleName(), 100));
-            task.setErrorMessage(truncate(e.getMessage(), 1000));
-            task.setFinishedAt(LocalDateTime.now());
-            customApiTaskMapper.updateById(task);
-            document.markFailed(e.getMessage());
-            this.updateById(document);
-            throw new JeecgBootException("failed to enqueue parse task: " + e.getMessage());
-        }
+        customMqOutboxService.enqueueParseTask(task, file, 1);
         return document;
     }
 
@@ -169,7 +165,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
         String originalFilename = firstNonBlank(document.getOriginalFilename(), document.getFilename(), "upload.zip");
         String storagePath = resolveStoragePath(document, storageType);
         LocalDateTime now = LocalDateTime.now();
-        return new CustomApiFile()
+        CustomApiFile file = new CustomApiFile()
                 .setFileId(CustomApiIds.fileId())
                 .setCustomerCode(firstNonBlank(internalCustomerCode, "INTERNAL"))
                 .setClientFileId(document.getId() == null ? null : "document_" + document.getId())
@@ -183,6 +179,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
                 .setStatus(CustomApiFile.STATUS_UPLOADED)
                 .setCreatedAt(now)
                 .setUploadedAt(firstNonNull(document.getUploadedAt(), now));
+        verifyWebFile(file);
+        return file;
     }
 
     private CustomApiTask buildApiTask(Document document, CustomApiFile file, String taskId) {
@@ -201,8 +199,38 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, Document> i
                 .setStatus(CustomApiTask.STATUS_QUEUED)
                 .setStage("queued")
                 .setProgress(0)
+                .setCustomsAiRunNo(1)
+                .setVersion(0)
                 .setMetadataJson(JSON.toJSONString(metadata))
                 .setCreatedAt(LocalDateTime.now());
+    }
+
+    private void verifyWebFile(CustomApiFile file) {
+        try (InputStream input = objectStorageService.openStream(file)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            long size = 0L;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                if (read > 0) {
+                    digest.update(buffer, 0, read);
+                    size += read;
+                }
+            }
+            if (size < 1L) {
+                throw new JeecgBootException("uploaded ZIP is empty");
+            }
+            String sha256 = HexFormat.of().formatHex(digest.digest());
+            file.setFileSize(size)
+                    .setSha256(sha256)
+                    .setActualFileSize(size)
+                    .setActualSha256(sha256)
+                    .setVerifiedAt(LocalDateTime.now());
+        } catch (JeecgBootException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new JeecgBootException("verify uploaded ZIP failed: " + e.getMessage());
+        }
     }
 
     private String resolveStoragePath(Document document, String storageType) {

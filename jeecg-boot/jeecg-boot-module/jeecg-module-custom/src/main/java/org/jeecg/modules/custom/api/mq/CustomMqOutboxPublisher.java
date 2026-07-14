@@ -1,0 +1,82 @@
+package org.jeecg.modules.custom.api.mq;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import lombok.extern.slf4j.Slf4j;
+import org.jeecg.modules.custom.api.entity.CustomApiFile;
+import org.jeecg.modules.custom.api.entity.CustomApiTask;
+import org.jeecg.modules.custom.api.entity.CustomMqOutbox;
+import org.jeecg.modules.custom.api.mapper.CustomApiTaskMapper;
+import org.jeecg.modules.custom.api.service.ICustomApiFileService;
+import org.jeecg.modules.custom.api.service.ICustomMqOutboxService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+@Component
+@Slf4j
+public class CustomMqOutboxPublisher {
+    private final ICustomMqOutboxService outboxService;
+    private final CustomApiTaskMqProducer producer;
+    private final CustomApiTaskMapper taskMapper;
+    private final ICustomApiFileService fileService;
+    private final int batchSize;
+    private final int maxAttempts;
+    private final long baseDelaySeconds;
+    private final long maxDelaySeconds;
+    private final long claimTimeoutSeconds;
+
+    @Autowired
+    public CustomMqOutboxPublisher(
+            ICustomMqOutboxService outboxService,
+            CustomApiTaskMqProducer producer,
+            CustomApiTaskMapper taskMapper,
+            ICustomApiFileService fileService,
+            @Value("${custom.api.outbox.batch-size:20}") int batchSize,
+            @Value("${custom.api.outbox.max-attempts:8}") int maxAttempts,
+            @Value("${custom.api.outbox.base-delay-seconds:2}") long baseDelaySeconds,
+            @Value("${custom.api.outbox.max-delay-seconds:300}") long maxDelaySeconds,
+            @Value("${custom.api.outbox.claim-timeout-seconds:300}") long claimTimeoutSeconds) {
+        this.outboxService = outboxService;
+        this.producer = producer;
+        this.taskMapper = taskMapper;
+        this.fileService = fileService;
+        this.batchSize = batchSize;
+        this.maxAttempts = maxAttempts;
+        this.baseDelaySeconds = baseDelaySeconds;
+        this.maxDelaySeconds = maxDelaySeconds;
+        this.claimTimeoutSeconds = claimTimeoutSeconds;
+    }
+
+    @Scheduled(fixedDelayString = "${custom.api.outbox.publish-interval-ms:1000}")
+    public void publishPending() {
+        outboxService.releaseStaleClaims(claimTimeoutSeconds);
+        for (CustomMqOutbox event : outboxService.findPublishable(batchSize)) {
+            if (!outboxService.claim(event.getId())) {
+                continue;
+            }
+            try {
+                event.setStatus(CustomMqOutbox.STATUS_SENDING);
+                CustomApiTask task = taskMapper.selectOne(new LambdaQueryWrapper<CustomApiTask>()
+                        .eq(CustomApiTask::getTaskId, event.getAggregateId()));
+                if (task == null) {
+                    throw new IllegalStateException("task not found: " + event.getAggregateId());
+                }
+                CustomApiFile file = fileService.getOne(new LambdaQueryWrapper<CustomApiFile>()
+                        .eq(CustomApiFile::getFileId, task.getFileId()), false);
+                if (file == null) {
+                    throw new IllegalStateException("file not found: " + task.getFileId());
+                }
+                producer.publishConfirmed(task, file, event);
+                outboxService.markSent(event.getId());
+            } catch (Exception e) {
+                log.warn("Publish custom MQ outbox failed, eventId={}", event.getEventId(), e);
+                outboxService.reschedule(event, message(e), maxAttempts, baseDelaySeconds, maxDelaySeconds);
+            }
+        }
+    }
+
+    private String message(Exception error) {
+        return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+    }
+}
